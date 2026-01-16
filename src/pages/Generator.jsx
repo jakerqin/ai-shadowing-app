@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../store/AppContext'
-import { generateContentStream } from '../services/ai'
+import { generateContent } from '../services/ai'
 import { LANGUAGES, SCENES } from '../utils/constants'
 import { generateId, getLanguageName } from '../utils/helpers'
 import { Button, Card } from '../components/UI'
@@ -11,10 +11,7 @@ export default function Generator() {
   const navigate = useNavigate()
   const { state, actions } = useApp()
   const { settings, isGenerating, generationError } = state
-  const [streamingText, setStreamingText] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
   const hasStartedRef = useRef(false)
-  const abortControllerRef = useRef(null)
   const isMountedRef = useRef(true)
 
   useEffect(() => {
@@ -27,47 +24,30 @@ export default function Generator() {
     // Start generation when page loads
     startGeneration()
     
-    // Cleanup on unmount - only abort if user navigates away, not during StrictMode remount
+    // Cleanup on unmount
     return () => {
       isMountedRef.current = false
-      // Don't abort here - let the request complete or be manually cancelled
     }
   }, [])
 
   const startGeneration = async () => {
     actions.setGenerating(true)
     actions.setGenerationError(null)
-    setStreamingText('')
-    setIsStreaming(true)
-    
-    // Create abort controller for cancellation
-    abortControllerRef.current = new AbortController()
 
     try {
       const targetLang = getLanguageName(settings.targetLanguage, LANGUAGES)
       const nativeLang = getLanguageName(settings.nativeLanguage, LANGUAGES)
 
-      const finalText = await generateContentStream(
-        {
-          targetLanguage: targetLang,
-          nativeLanguage: nativeLang,
-          difficulty: settings.difficulty,
-          scene: settings.scene,
-          length: settings.length,
-        },
-        (chunk, fullText) => {
-          // Only update state if component is still mounted
-          if (isMountedRef.current) {
-            setStreamingText(fullText)
-          }
-        },
-        { signal: abortControllerRef.current.signal }
-      )
+      const finalText = await generateContent({
+        targetLanguage: targetLang,
+        nativeLanguage: nativeLang,
+        difficulty: settings.difficulty,
+        scene: settings.scene,
+        length: settings.length,
+      })
 
       // Only update state if component is still mounted
       if (!isMountedRef.current) return
-      
-      setIsStreaming(false)
 
       // Create content object
       const content = {
@@ -79,28 +59,21 @@ export default function Generator() {
       }
 
       actions.setCurrentContent(content)
+      actions.setGenerating(false)
       
-      // Small delay to show completed text
-      setTimeout(() => {
-        navigate('/result')
-      }, 500)
+      // Navigate to result page
+      navigate('/result')
 
     } catch (error) {
-      if (error.name === 'AbortError') {
-        // User cancelled, don't show error
-        return
-      }
       console.error('Generation failed:', error)
-      actions.setGenerationError(error.message || 'Failed to generate content')
-      actions.setGenerating(false)
-      setIsStreaming(false)
+      if (isMountedRef.current) {
+        actions.setGenerationError(error.message || 'Failed to generate content')
+        actions.setGenerating(false)
+      }
     }
   }
 
   const handleCancel = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
     actions.setGenerating(false)
     navigate('/')
   }
@@ -152,52 +125,26 @@ export default function Generator() {
               </div>
             </div>
           ) : (
-            // Streaming State
+            // Loading State
             <div className="animate-fade-in">
-              {streamingText ? (
-                // Show streaming text
-                <>
-                  <div className="flex items-center justify-center gap-2 mb-4">
-                    <Sparkles className="w-5 h-5 text-white animate-pulse" />
-                    <span className="text-white/80 text-sm">Generating...</span>
-                  </div>
-                  
-                  <Card className="bg-white/95 backdrop-blur text-left p-4 mb-6 max-h-[50vh] overflow-y-auto">
-                    <p className="text-gray-800 text-base leading-relaxed whitespace-pre-wrap">
-                      {streamingText}
-                      {isStreaming && <span className="typewriter-cursor" />}
-                    </p>
-                  </Card>
-                  
-                  {!isStreaming && (
-                    <p className="text-white/70 text-sm">
-                      ✨ Content ready! Redirecting...
-                    </p>
-                  )}
-                </>
-              ) : (
-                // Initial loading state
-                <>
-                  <div className="relative w-24 h-24 mx-auto mb-8">
-                    <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
-                    <div className="absolute inset-2 bg-white/30 rounded-full animate-pulse" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <Sparkles className="w-12 h-12 text-white animate-bounce-slow" />
-                    </div>
-                  </div>
+              <div className="relative w-24 h-24 mx-auto mb-8">
+                <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
+                <div className="absolute inset-2 bg-white/30 rounded-full animate-pulse" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Sparkles className="w-12 h-12 text-white animate-bounce-slow" />
+                </div>
+              </div>
 
-                  <h1 className="text-2xl font-bold mb-3">Creating Your Content</h1>
-                  <p className="text-white/70 mb-8">
-                    Generating {settings.length} {scene?.name.toLowerCase()} content in {targetLang?.nativeName}...
-                  </p>
+              <h1 className="text-2xl font-bold mb-3">Creating Your Content</h1>
+              <p className="text-white/70 mb-8">
+                Generating {settings.length} {scene?.name.toLowerCase()} content in {targetLang?.nativeName}...
+              </p>
 
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                </>
-              )}
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
           )}
         </div>

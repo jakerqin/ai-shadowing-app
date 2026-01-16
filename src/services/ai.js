@@ -269,9 +269,35 @@ async function geminiStreamChat(messages, options = {}, onChunk) {
     if (done) break
     
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
     
+    // Process complete SSE events (separated by double newlines)
+    let eventEnd
+    while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+      const event = buffer.slice(0, eventEnd)
+      buffer = buffer.slice(eventEnd + 2)
+      
+      // Extract data from the event
+      const lines = event.split('\n')
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const json = JSON.parse(line.slice(6))
+            const text = json.candidates?.[0]?.content?.parts?.[0]?.text || ''
+            if (text) {
+              fullText += text
+              onChunk(text, fullText)
+            }
+          } catch {
+            // Skip invalid JSON
+          }
+        }
+      }
+    }
+  }
+  
+  // Process any remaining data in buffer
+  if (buffer.trim()) {
+    const lines = buffer.split('\n')
     for (const line of lines) {
       if (line.startsWith('data: ')) {
         try {

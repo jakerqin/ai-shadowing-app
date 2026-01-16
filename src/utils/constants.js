@@ -138,6 +138,22 @@ export const AI_PROVIDERS = buildAIProviders()
 
 // TTS Providers configuration
 export const TTS_PROVIDERS = {
+  gemini: {
+    id: 'gemini',
+    name: 'Gemini TTS',
+    icon: '✨',
+    voices: [
+      { id: 'Zephyr', name: 'Zephyr (Bright)' },
+      { id: 'Puck', name: 'Puck (Upbeat)' },
+      { id: 'Charon', name: 'Charon (Informative)' },
+      { id: 'Kore', name: 'Kore (Firm)' },
+      { id: 'Fenrir', name: 'Fenrir (Excitable)' },
+      { id: 'Leda', name: 'Leda (Youthful)' },
+      { id: 'Orus', name: 'Orus (Firm)' },
+      { id: 'Aoede', name: 'Aoede (Breezy)' },
+    ],
+    defaultVoice: 'Kore',
+  },
   glm: {
     id: 'glm',
     name: 'GLM-TTS (智谱)',
@@ -204,5 +220,10 @@ export const getEnvConfig = () => ({
   tts: {
     baseUrl: import.meta.env.TTS_BASE_URL || '',
     apiKey: import.meta.env.TTS_API_KEY || '',
+  },
+  geminiTts: {
+    baseUrl: import.meta.env.GEMINI_TTS_BASE_URL || '',
+    apiKey: import.meta.env.GEMINI_TTS_API_KEY || '',
+    model: import.meta.env.GEMINI_TTS_DEFAULT_MODEL || 'gemini-2.5-flash-preview-tts',
   },
 })

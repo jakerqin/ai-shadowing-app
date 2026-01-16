@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { useApp } from '../store/AppContext'
-import { translateTextStream, explainWordStream, chatAboutText, generatePhonetics } from '../services/ai'
+import { translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
 import { speakText, generateSpeech, createAudioPlayer } from '../services/tts'
 import { LANGUAGES, SCENES } from '../utils/constants'
 import { tokenizeText, getLanguageName, isCJK } from '../utils/helpers'
@@ -18,7 +18,6 @@ export default function Result() {
   const { currentContent, settings, showTranslation, chatMessages, selectedText, isPlaying } = state
   
   const [isTranslating, setIsTranslating] = useState(false)
-  const [streamingTranslation, setStreamingTranslation] = useState('')
   const [playingWord, setPlayingWord] = useState(null)
   const [showChat, setShowChat] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
@@ -31,7 +30,6 @@ export default function Result() {
   
   const audioPlayerRef = useRef(createAudioPlayer())
   const chatEndRef = useRef(null)
-  const abortControllerRef = useRef(null)
 
   // Redirect if no content
   useEffect(() => {
@@ -109,7 +107,7 @@ export default function Result() {
     }
   }
 
-  // Translate content with streaming
+  // Translate content
   const handleTranslate = async () => {
     if (currentContent.translation) {
       actions.toggleTranslation()
@@ -117,30 +115,18 @@ export default function Result() {
     }
 
     setIsTranslating(true)
-    setStreamingTranslation('')
     actions.toggleTranslation() // Show translation area immediately
-    
-    // Create abort controller for cancellation
-    abortControllerRef.current = new AbortController()
 
     try {
-      const finalTranslation = await translateTextStream(
+      const finalTranslation = await translateText(
         currentContent.text,
         getLanguageName(settings.targetLanguage, LANGUAGES),
-        getLanguageName(settings.nativeLanguage, LANGUAGES),
-        (chunk, fullText) => {
-          setStreamingTranslation(fullText)
-        },
-        { signal: abortControllerRef.current.signal }
+        getLanguageName(settings.nativeLanguage, LANGUAGES)
       )
       
       // Save final translation to state
       actions.setTranslation(finalTranslation)
-      setStreamingTranslation('')
     } catch (error) {
-      if (error.name === 'AbortError') {
-        return
-      }
       console.error('Translation failed:', error)
     } finally {
       setIsTranslating(false)
@@ -198,31 +184,22 @@ export default function Result() {
     }
   }
 
-  // Explain word with streaming
+  // Explain word
   const handleExplainWord = async (word) => {
     actions.setSelectedText(word)
     setShowExplanation(true)
     setIsExplaining(true)
     setExplanation('')
 
-    // Create abort controller for cancellation
-    const explainAbortController = new AbortController()
-
     try {
-      await explainWordStream(
+      const result = await explainWord(
         word,
         getLanguageName(settings.targetLanguage, LANGUAGES),
         getLanguageName(settings.nativeLanguage, LANGUAGES),
-        currentContent.text,
-        (chunk, fullText) => {
-          setExplanation(fullText)
-        },
-        { signal: explainAbortController.signal }
+        currentContent.text
       )
+      setExplanation(result)
     } catch (error) {
-      if (error.name === 'AbortError') {
-        return
-      }
       console.error('Explanation failed:', error)
       setExplanation('Failed to generate explanation. Please try again.')
     } finally {
@@ -320,18 +297,18 @@ export default function Result() {
           {/* Translation */}
           {showTranslation && (
             <div className="mt-3 pt-3 border-t border-gray-100">
-              <p className="text-gray-600 text-sm leading-snug whitespace-pre-wrap">
-                {currentContent.translation || streamingTranslation}
-                {isTranslating && <span className="typewriter-cursor" />}
-              </p>
-              {isTranslating && !streamingTranslation && (
+              {currentContent.translation ? (
+                <p className="text-gray-600 text-sm leading-snug whitespace-pre-wrap">
+                  {currentContent.translation}
+                </p>
+              ) : isTranslating ? (
                 <div className="flex items-center gap-2 text-gray-400 text-xs">
                   <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                   <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                   <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   <span className="ml-1">Translating...</span>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
         </Card>

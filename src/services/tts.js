@@ -16,8 +16,8 @@ export function getTTSConfig() {
   }
   
   return {
-    provider: 'openai',
-    voice: 'alloy',
+    provider: 'gemini',
+    voice: 'Kore',
     customBaseUrl: '',
     customApiKey: '',
   }
@@ -35,9 +35,14 @@ function getCredentials(config) {
   // TTS can use its own config or fall back to provider-specific config
   let baseUrl = config.customBaseUrl || envConfig.tts.baseUrl
   let apiKey = config.customApiKey || envConfig.tts.apiKey
+  let model = ''
   
   // If no TTS-specific config, try to use the provider's config
-  if (!baseUrl && config.provider === 'openai') {
+  if (config.provider === 'gemini') {
+    baseUrl = config.customBaseUrl || envConfig.geminiTts.baseUrl
+    apiKey = config.customApiKey || envConfig.geminiTts.apiKey
+    model = envConfig.geminiTts.model
+  } else if (!baseUrl && config.provider === 'openai') {
     baseUrl = envConfig.openai.baseUrl
     apiKey = apiKey || envConfig.openai.apiKey
   } else if (!baseUrl && config.provider === 'glm') {
@@ -45,7 +50,7 @@ function getCredentials(config) {
     apiKey = apiKey || envConfig.glm.apiKey
   }
   
-  return { baseUrl, apiKey }
+  return { baseUrl, apiKey, model }
 }
 
 // ============ OpenAI TTS ============
@@ -142,24 +147,177 @@ async function azureTTS(text, options = {}) {
   return await response.blob()
 }
 
+// ============ Gemini TTS ============
+
+// Helper: Get pacing prefix based on speed value
+// Gemini TTS uses natural language prompts in the text itself to control speech style
+function getGeminiPacingPrefix(speed) {
+  // speed ranges from 0.6 (very slow) to 1.0 (normal)
+  if (speed <= 0.6) {
+    return 'Say very slowly and clearly: '
+  } else if (speed <= 0.7) {
+    return 'Say slowly: '
+  } else if (speed <= 0.8) {
+    return 'Say at a moderate pace: '
+  } else if (speed <= 0.9) {
+    return 'Say naturally: '
+  } else {
+    return '' // Normal speed, no prefix needed
+  }
+}
+
+async function geminiTTS(text, options = {}) {
+  const config = getTTSConfig()
+  const { baseUrl, apiKey, model } = getCredentials(config)
+  const voice = options.voice || config.voice || 'Kore'
+  const speed = options.speed || 1.0
+
+  // Gemini TTS API: /v1beta/models/{model}:generateContent
+  const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`
+  
+  // Get pacing prefix based on speed (Gemini TTS uses text prompts for style control)
+  const pacingPrefix = getGeminiPacingPrefix(speed)
+  const textWithPacing = pacingPrefix + text
+  
+  const requestBody = {
+    contents: [
+      {
+        parts: [
+          {
+            text: textWithPacing
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: voice
+          }
+        }
+      }
+    },
+    model: model
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Gemini TTS error: ${response.status} - ${error}`)
+  }
+
+  const data = await response.json()
+  
+  // Extract base64 audio data from response
+  const audioData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
+  if (!audioData) {
+    throw new Error('No audio data in Gemini TTS response')
+  }
+
+  // Convert base64 PCM to WAV blob
+  const pcmBuffer = base64ToArrayBuffer(audioData)
+  const wavBlob = pcmToWav(pcmBuffer, 24000, 1, 16)
+  
+  return wavBlob
+}
+
+// Helper: Convert base64 to ArrayBuffer
+function base64ToArrayBuffer(base64) {
+  const binaryString = atob(base64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
+// Helper: Convert PCM to WAV format
+function pcmToWav(pcmBuffer, sampleRate = 24000, numChannels = 1, bitsPerSample = 16) {
+  const pcmData = new Uint8Array(pcmBuffer)
+  const wavHeader = createWavHeader(pcmData.length, sampleRate, numChannels, bitsPerSample)
+  
+  // Combine header and PCM data
+  const wavBuffer = new Uint8Array(wavHeader.length + pcmData.length)
+  wavBuffer.set(wavHeader, 0)
+  wavBuffer.set(pcmData, wavHeader.length)
+  
+  return new Blob([wavBuffer], { type: 'audio/wav' })
+}
+
+// Helper: Create WAV header
+function createWavHeader(dataLength, sampleRate, numChannels, bitsPerSample) {
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8)
+  const blockAlign = numChannels * (bitsPerSample / 8)
+  const header = new ArrayBuffer(44)
+  const view = new DataView(header)
+  
+  // RIFF chunk descriptor
+  writeString(view, 0, 'RIFF')
+  view.setUint32(4, 36 + dataLength, true) // File size - 8
+  writeString(view, 8, 'WAVE')
+  
+  // fmt sub-chunk
+  writeString(view, 12, 'fmt ')
+  view.setUint32(16, 16, true) // Subchunk1Size (16 for PCM)
+  view.setUint16(20, 1, true) // AudioFormat (1 for PCM)
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, byteRate, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bitsPerSample, true)
+  
+  // data sub-chunk
+  writeString(view, 36, 'data')
+  view.setUint32(40, dataLength, true)
+  
+  return new Uint8Array(header)
+}
+
+// Helper: Write string to DataView
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i))
+  }
+}
+
 // ============ Unified TTS Interface ============
 export async function generateSpeech(text, language, options = {}) {
-  const cacheKey = `${text}-${language}-${options.speed || 1.0}`
+  const config = getTTSConfig()
+  const cacheKey = `${config.provider}-${config.voice}-${text}-${language}-${options.speed || 1.0}`
   
   // Check cache first
   if (audioCache.has(cacheKey)) {
     return audioCache.get(cacheKey)
   }
 
-  const config = getTTSConfig()
+  const envConfig = getEnvConfig()
   
-  if (!config.customBaseUrl && !getEnvConfig().tts.baseUrl) {
+  // Check if TTS is configured based on provider
+  const isConfigured = config.customBaseUrl ||
+    (config.provider === 'gemini' && envConfig.geminiTts.baseUrl) ||
+    (config.provider === 'openai' && (envConfig.tts.baseUrl || envConfig.openai.baseUrl)) ||
+    (config.provider === 'glm' && (envConfig.tts.baseUrl || envConfig.glm.baseUrl)) ||
+    (config.provider === 'azure' && envConfig.tts.baseUrl)
+  
+  if (!isConfigured) {
     throw new Error('TTS not configured. Please configure TTS in Settings.')
   }
 
   let audioBlob
   
   switch (config.provider) {
+    case 'gemini':
+      audioBlob = await geminiTTS(text, options)
+      break
     case 'openai':
       audioBlob = await openaiTTS(text, options)
       break
@@ -170,7 +328,7 @@ export async function generateSpeech(text, language, options = {}) {
       audioBlob = await azureTTS(text, options)
       break
     default:
-      audioBlob = await openaiTTS(text, options)
+      audioBlob = await geminiTTS(text, options)
   }
 
   const audioUrl = URL.createObjectURL(audioBlob)

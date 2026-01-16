@@ -222,6 +222,7 @@ export default function Settings() {
                 {currentTTSProvider?.icon} {currentTTSProvider?.name}
               </h3>
               <p className="text-sm text-primary-700">
+                {ttsConfig.provider === 'gemini' && 'Gemini TTS - High-quality, natural-sounding speech synthesis.'}
                 {ttsConfig.provider === 'openai' && 'OpenAI TTS - Natural, expressive voices.'}
                 {ttsConfig.provider === 'glm' && 'GLM TTS - High-quality Chinese speech synthesis.'}
                 {ttsConfig.provider === 'azure' && 'Azure Speech - Enterprise-grade TTS with many voices.'}
