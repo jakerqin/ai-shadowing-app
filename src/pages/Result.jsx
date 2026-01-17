@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { useApp } from '../store/AppContext'
-import { translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
+import { generateContentStream, translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
 import { speakText, generateSpeech, createAudioPlayer } from '../services/tts'
 import { LANGUAGES, SCENES } from '../utils/constants'
-import { tokenizeText, getLanguageName, isCJK } from '../utils/helpers'
+import { tokenizeText, getLanguageName, generateId } from '../utils/helpers'
 import { Button, Card, Modal, Badge, Spinner, IconButton, Textarea } from '../components/UI'
 import {
   ArrowLeft, Play, Pause, Volume2, Languages, BookmarkPlus,
@@ -15,7 +15,7 @@ import {
 export default function Result() {
   const navigate = useNavigate()
   const { state, actions } = useApp()
-  const { currentContent, settings, showTranslation, chatMessages, selectedText, isPlaying } = state
+  const { currentContent, settings, showTranslation, chatMessages, selectedText, isPlaying, isGenerating, generationError } = state
   
   const [isTranslating, setIsTranslating] = useState(false)
   const [playingWord, setPlayingWord] = useState(null)
@@ -30,29 +30,166 @@ export default function Result() {
   
   const audioPlayerRef = useRef(createAudioPlayer())
   const chatEndRef = useRef(null)
+  const hasStartedRef = useRef(false)
+  const abortControllerRef = useRef(null)
+  const typewriterTimerRef = useRef(null)
+  const pendingTextRef = useRef('')
+  const displayTextRef = useRef('')
+  const streamDoneRef = useRef(false)
+  const activeGenerationIdRef = useRef(null)
+
+  const TYPEWRITER_INTERVAL_MS = 20
+  const TYPEWRITER_CHUNK_SIZE = 3
 
   // Redirect if no content
   useEffect(() => {
-    if (!currentContent) {
+    if (!currentContent && !isGenerating) {
       navigate('/')
     }
-  }, [currentContent, navigate])
+  }, [currentContent, isGenerating, navigate])
+
+  useEffect(() => {
+    if (!isGenerating) {
+      hasStartedRef.current = false
+      return
+    }
+    if (hasStartedRef.current) return
+    hasStartedRef.current = true
+    startStreamingGeneration()
+
+    return () => {
+      hasStartedRef.current = false
+      cleanupStreaming()
+    }
+  }, [isGenerating])
 
   // Scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages])
 
-  if (!currentContent) return null
+  if (!currentContent && !isGenerating) return null
 
   const targetLang = LANGUAGES.find(l => l.code === settings.targetLanguage)
   const nativeLang = LANGUAGES.find(l => l.code === settings.nativeLanguage)
   const scene = SCENES.find(s => s.id === settings.scene)
-  const tokens = tokenizeText(currentContent.text, settings.targetLanguage)
+  const contentText = currentContent?.text || ''
+  const tokens = tokenizeText(contentText, settings.targetLanguage)
   const isCJKLanguage = ['zh', 'ja'].includes(settings.targetLanguage)
+  const isStreaming = isGenerating && !generationError
+
+  const stopTypewriter = () => {
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current)
+      typewriterTimerRef.current = null
+    }
+  }
+
+  const cleanupStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    stopTypewriter()
+    pendingTextRef.current = ''
+    displayTextRef.current = ''
+    streamDoneRef.current = false
+    activeGenerationIdRef.current = null
+  }
+
+  const finalizeStream = (generationId) => {
+    if (activeGenerationIdRef.current !== generationId) return
+    stopTypewriter()
+    const trimmedText = displayTextRef.current.trim()
+    if (trimmedText !== displayTextRef.current) {
+      displayTextRef.current = trimmedText
+      actions.updateCurrentContentText(trimmedText)
+    }
+    actions.setGenerating(false)
+    activeGenerationIdRef.current = null
+  }
+
+  const startTypewriter = (generationId) => {
+    if (typewriterTimerRef.current) return
+    typewriterTimerRef.current = setInterval(() => {
+      if (activeGenerationIdRef.current !== generationId) {
+        stopTypewriter()
+        return
+      }
+
+      if (!pendingTextRef.current.length) {
+        if (streamDoneRef.current) {
+          finalizeStream(generationId)
+        }
+        return
+      }
+
+      const nextChunk = pendingTextRef.current.slice(0, TYPEWRITER_CHUNK_SIZE)
+      pendingTextRef.current = pendingTextRef.current.slice(TYPEWRITER_CHUNK_SIZE)
+      displayTextRef.current += nextChunk
+      actions.updateCurrentContentText(displayTextRef.current)
+    }, TYPEWRITER_INTERVAL_MS)
+  }
+
+  const startStreamingGeneration = async () => {
+    const generationId = generateId()
+    activeGenerationIdRef.current = generationId
+    streamDoneRef.current = false
+    pendingTextRef.current = ''
+    displayTextRef.current = ''
+    actions.setGenerationError(null)
+    actions.setGenerating(true)
+
+    const content = {
+      id: generationId,
+      text: '',
+      settings: { ...settings },
+      createdAt: new Date().toISOString(),
+      translation: null,
+    }
+
+    actions.setCurrentContent(content)
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    try {
+      const targetLanguage = getLanguageName(settings.targetLanguage, LANGUAGES)
+      const nativeLanguage = getLanguageName(settings.nativeLanguage, LANGUAGES)
+
+      await generateContentStream(
+        {
+          targetLanguage,
+          nativeLanguage,
+          difficulty: settings.difficulty,
+          scene: settings.scene,
+          length: settings.length,
+        },
+        (chunk) => {
+          if (activeGenerationIdRef.current !== generationId) return
+          pendingTextRef.current += chunk
+          startTypewriter(generationId)
+        },
+        { signal: controller.signal },
+      )
+
+      streamDoneRef.current = true
+      if (!pendingTextRef.current.length) {
+        finalizeStream(generationId)
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return
+      stopTypewriter()
+      pendingTextRef.current = ''
+      streamDoneRef.current = false
+      actions.setGenerationError(error.message || 'Failed to generate content')
+      actions.setGenerating(false)
+    }
+  }
 
   // Play full text
   const handlePlayFull = async () => {
+    if (isStreaming || !contentText) return
     if (isPlaying) {
       audioPlayerRef.current.stop()
       actions.setPlaying(false)
@@ -75,6 +212,7 @@ export default function Result() {
 
   // Play single word
   const handlePlayWord = async (word) => {
+    if (isStreaming || !contentText) return
     if (playingWord === word) {
       audioPlayerRef.current.stop()
       setPlayingWord(null)
@@ -95,6 +233,7 @@ export default function Result() {
 
   // Get phonetics for a word
   const handleGetPhonetics = async (word) => {
+    if (isStreaming || !contentText) return null
     if (phonetics[word]) return phonetics[word]
     
     try {
@@ -109,7 +248,8 @@ export default function Result() {
 
   // Translate content
   const handleTranslate = async () => {
-    if (currentContent.translation) {
+    if (isStreaming || !contentText) return
+    if (currentContent?.translation) {
       actions.toggleTranslation()
       return
     }
@@ -119,7 +259,7 @@ export default function Result() {
 
     try {
       const finalTranslation = await translateText(
-        currentContent.text,
+        contentText,
         getLanguageName(settings.targetLanguage, LANGUAGES),
         getLanguageName(settings.nativeLanguage, LANGUAGES)
       )
@@ -135,6 +275,7 @@ export default function Result() {
 
   // Handle text selection
   const handleTextSelection = () => {
+    if (isStreaming) return
     const selection = window.getSelection()
     const text = selection.toString().trim()
     if (text && text.length > 0) {
@@ -144,6 +285,7 @@ export default function Result() {
 
   // Open chat with selected text
   const handleOpenChat = () => {
+    if (isStreaming) return
     if (selectedText) {
       setShowChat(true)
     }
@@ -151,7 +293,7 @@ export default function Result() {
 
   // Send chat message
   const handleSendChat = async () => {
-    if (!chatInput.trim() || isChatLoading) return
+    if (isStreaming || !chatInput.trim() || isChatLoading) return
 
     const userMessage = {
       role: 'user',
@@ -186,6 +328,7 @@ export default function Result() {
 
   // Explain word
   const handleExplainWord = async (word) => {
+    if (isStreaming || !contentText) return
     actions.setSelectedText(word)
     setShowExplanation(true)
     setIsExplaining(true)
@@ -209,9 +352,27 @@ export default function Result() {
 
   // Save to notebook
   const handleSave = () => {
+    if (isStreaming || !currentContent) return
     actions.addToNotebook()
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const handleRetryGeneration = () => {
+    cleanupStreaming()
+    hasStartedRef.current = false
+    actions.resetContent()
+    actions.setGenerationError(null)
+    actions.setGenerating(true)
+  }
+
+  const handleExit = () => {
+    if (isStreaming) {
+      cleanupStreaming()
+      actions.resetContent()
+      actions.setGenerating(false)
+    }
+    navigate('/')
   }
 
   return (
@@ -220,7 +381,7 @@ export default function Result() {
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
           <button 
-            onClick={() => navigate('/')}
+            onClick={handleExit}
             className="p-2 -ml-2 rounded-full hover:bg-gray-100 transition-colors"
           >
             <ArrowLeft className="w-5 h-5 text-gray-600" />
@@ -232,7 +393,7 @@ export default function Result() {
           </div>
           
           <button 
-            onClick={() => navigate('/')}
+            onClick={handleExit}
             className="p-2 -mr-2 rounded-full hover:bg-gray-100 transition-colors"
           >
             <Home className="w-5 h-5 text-gray-600" />
@@ -242,12 +403,27 @@ export default function Result() {
 
       {/* Main Content */}
       <main className="max-w-lg mx-auto px-4 py-6">
+
+        {generationError && (
+          <Card className="p-4 mb-4 border-red-200 bg-red-50">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-red-600">Generation Failed</p>
+                <p className="text-xs text-red-500 mt-1">{generationError}</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={handleRetryGeneration}>
+                Retry
+              </Button>
+            </div>
+          </Card>
+        )}
         
         {/* Play Button */}
         <div className="flex justify-center mb-6">
           <button
             onClick={handlePlayFull}
-            className="relative w-20 h-20 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200"
+            disabled={isStreaming || !contentText}
+            className="relative w-20 h-20 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
             {isPlaying && <div className="pulse-ring" />}
             {isPlaying ? (
@@ -261,11 +437,14 @@ export default function Result() {
         {/* Text Content */}
         <Card className="p-3 mb-3">
           <div
-            className="text-sm leading-snug break-words"
+            className={`text-sm leading-snug break-words ${isStreaming ? 'select-none pointer-events-none' : ''}`}
             style={{ letterSpacing: isCJKLanguage ? '0' : '-0.01em' }}
             onMouseUp={handleTextSelection}
             onTouchEnd={handleTextSelection}
           >
+            {!contentText && isStreaming && (
+              <span className="text-xs text-gray-400">Generating...</span>
+            )}
             {tokens.map((token, index) => {
               if (token === '\n') {
                 return <br key={index} />
@@ -292,14 +471,15 @@ export default function Result() {
                 </span>
               )
             })}
+            {isStreaming && <span className="typewriter-cursor" />}
           </div>
           
           {/* Translation */}
           {showTranslation && (
             <div className="mt-3 pt-3 border-t border-gray-100">
-              {currentContent.translation ? (
+              {currentContent?.translation ? (
                 <p className="text-gray-600 text-sm leading-snug whitespace-pre-wrap">
-                  {currentContent.translation}
+                  {currentContent?.translation}
                 </p>
               ) : isTranslating ? (
                 <div className="flex items-center gap-2 text-gray-400 text-xs">
@@ -314,7 +494,7 @@ export default function Result() {
         </Card>
 
         {/* Selected Text Actions */}
-        {selectedText && (
+        {selectedText && !isStreaming && (
           <Card className="p-3 mb-4 bg-primary-50 border-primary-200 animate-slide-up">
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
@@ -353,6 +533,7 @@ export default function Result() {
             variant="secondary"
             onClick={handleTranslate}
             loading={isTranslating}
+            disabled={isStreaming || !contentText}
             className="justify-center"
           >
             <Languages className="w-4 h-4 mr-2" />
@@ -362,7 +543,7 @@ export default function Result() {
           <Button
             variant={saved ? 'primary' : 'secondary'}
             onClick={handleSave}
-            disabled={saved}
+            disabled={saved || isStreaming || !currentContent}
             className="justify-center"
           >
             {saved ? (

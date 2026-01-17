@@ -47,6 +47,7 @@ const ActionTypes = {
   TOGGLE_TRANSLATION: 'TOGGLE_TRANSLATION',
   SET_TRANSLATION: 'SET_TRANSLATION',
   SET_PLAYING: 'SET_PLAYING',
+  UPDATE_CURRENT_CONTENT_TEXT: 'UPDATE_CURRENT_CONTENT_TEXT',
   RESET_CONTENT: 'RESET_CONTENT',
 }
 
@@ -142,6 +143,14 @@ function appReducer(state, action) {
       return {
         ...state,
         isPlaying: action.payload,
+      }
+
+    case ActionTypes.UPDATE_CURRENT_CONTENT_TEXT:
+      return {
+        ...state,
+        currentContent: state.currentContent
+          ? { ...state.currentContent, text: action.payload }
+          : state.currentContent,
       }
     
     case ActionTypes.RESET_CONTENT:
@@ -239,6 +248,10 @@ export function AppProvider({ children }) {
     
     setPlaying: (isPlaying) => {
       dispatch({ type: ActionTypes.SET_PLAYING, payload: isPlaying })
+    },
+
+    updateCurrentContentText: (text) => {
+      dispatch({ type: ActionTypes.UPDATE_CURRENT_CONTENT_TEXT, payload: text })
     },
     
     resetContent: () => {

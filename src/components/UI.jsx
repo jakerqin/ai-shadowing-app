@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useEffect, useRef, useState } from 'react'
 import { X, ChevronDown } from 'lucide-react'
 
 // Button component
@@ -68,24 +68,79 @@ export function Select({
   placeholder = 'Select...', 
   className = '',
   label = '',
+  disabled = false,
 }) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef(null)
+  const selectedOption = options.find((option) => option.value === value)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
+
+  const handleSelect = (nextValue) => {
+    onChange(nextValue)
+    setOpen(false)
+  }
+
   return (
-    <div className={className}>
+    <div className={className} ref={containerRef}>
       {label && <label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>}
       <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl focus:border-primary-400 focus:ring-4 focus:ring-primary-100 outline-none transition-all duration-200 appearance-none cursor-pointer pr-10"
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          className={`w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl text-left focus:border-primary-400 focus:ring-4 focus:ring-primary-100 outline-none transition-all duration-200 flex items-center justify-between gap-2 ${open ? 'border-primary-400 ring-4 ring-primary-100' : ''} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
         >
-          {placeholder && <option value="" disabled>{placeholder}</option>}
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+          <span className={`truncate ${selectedOption ? 'text-gray-900' : 'text-gray-400'}`}>
+            {selectedOption ? selectedOption.label : placeholder}
+          </span>
+          <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+        </button>
+
+        {open && (
+          <div
+            role="listbox"
+            className="absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto"
+          >
+            {options.map((option) => {
+              const isSelected = option.value === value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => handleSelect(option.value)}
+                  className={`w-full px-4 py-2.5 text-left text-sm transition-colors ${isSelected ? 'bg-primary-50 text-primary-600 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -257,19 +312,30 @@ export function Input({
   label = '',
   type = 'text',
   className = '',
+  inputClassName = '',
+  endAdornment = null,
   ...props 
 }) {
+  const basePaddingRight = endAdornment ? 'pr-16' : ''
+
   return (
     <div className={className}>
       {label && <label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>}
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl focus:border-primary-400 focus:ring-4 focus:ring-primary-100 outline-none transition-all duration-200 placeholder:text-gray-400"
-        {...props}
-      />
+      <div className="relative">
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={`w-full px-4 py-3 ${basePaddingRight} bg-white border-2 border-gray-200 rounded-xl focus:border-primary-400 focus:ring-4 focus:ring-primary-100 outline-none transition-all duration-200 placeholder:text-gray-400 ${inputClassName}`}
+          {...props}
+        />
+        {endAdornment && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+            {endAdornment}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

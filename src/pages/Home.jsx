@@ -17,7 +17,9 @@ export default function Home() {
   const currentTTSProvider = TTS_PROVIDERS[ttsConfig.provider]
 
   const handleStart = () => {
-    navigate('/generate')
+    actions.resetContent()
+    actions.setGenerating(true)
+    navigate('/result')
   }
 
   const languageOptions = LANGUAGES.map(lang => ({
@@ -66,9 +68,6 @@ export default function Home() {
           <h1 className="text-3xl font-bold mb-2">
             Practice Speaking <Sparkles className="inline w-7 h-7 text-accent-300" />
           </h1>
-          <p className="text-white/80">
-            Generate AI-powered content and practice pronunciation in any language
-          </p>
           
           {/* Current Provider Badges */}
           <div className="mt-4 flex flex-wrap items-center gap-2">

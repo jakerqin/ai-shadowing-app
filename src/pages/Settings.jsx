@@ -4,7 +4,7 @@ import { getAIConfig, saveAIConfig } from '../services/ai'
 import { getTTSConfig, saveTTSConfig } from '../services/tts'
 import { AI_PROVIDERS, TTS_PROVIDERS } from '../utils/constants'
 import { Button, Card, Select, Input } from '../components/UI'
-import { ArrowLeft, Check, Settings as SettingsIcon, Key, Cpu, Volume2 } from 'lucide-react'
+import { ArrowLeft, Check, Settings as SettingsIcon, Cpu, Volume2 } from 'lucide-react'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -59,7 +59,10 @@ export default function Settings() {
     saveAIConfig(aiConfig)
     saveTTSConfig(ttsConfig)
     setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    // 保存后自动跳转到首页
+    setTimeout(() => {
+      navigate('/')
+    }, 1000)
   }
 
   return (
@@ -128,22 +131,22 @@ export default function Settings() {
               className="mb-3"
             />
             
-            <div className="relative">
-              <Input
-                label="API Key"
-                type={showAIKey ? 'text' : 'password'}
-                value={aiConfig.customApiKey}
-                onChange={(value) => setAIConfig({ ...aiConfig, customApiKey: value })}
-                placeholder="Enter your API key"
-              />
-              <button
-                type="button"
-                onClick={() => setShowAIKey(!showAIKey)}
-                className="absolute right-3 top-9 text-sm text-primary-500 hover:text-primary-600"
-              >
-                {showAIKey ? 'Hide' : 'Show'}
-              </button>
-            </div>
+            <Input
+              label="API Key"
+              type={showAIKey ? 'text' : 'password'}
+              value={aiConfig.customApiKey}
+              onChange={(value) => setAIConfig({ ...aiConfig, customApiKey: value })}
+              placeholder="Enter your API key"
+              endAdornment={
+                <button
+                  type="button"
+                  onClick={() => setShowAIKey(!showAIKey)}
+                  className="text-xs font-semibold text-primary-600 hover:text-primary-700 px-2 py-1 rounded-lg hover:bg-primary-50 transition-colors"
+                >
+                  {showAIKey ? 'Hide' : 'Show'}
+                </button>
+              }
+            />
           </div>
         </Card>
 
@@ -184,52 +187,25 @@ export default function Settings() {
               className="mb-3"
             />
             
-            <div className="relative">
-              <Input
-                label="API Key"
-                type={showTTSKey ? 'text' : 'password'}
-                value={ttsConfig.customApiKey}
-                onChange={(value) => setTTSConfig({ ...ttsConfig, customApiKey: value })}
-                placeholder="Enter your API key"
-              />
-              <button
-                type="button"
-                onClick={() => setShowTTSKey(!showTTSKey)}
-                className="absolute right-3 top-9 text-sm text-primary-500 hover:text-primary-600"
-              >
-                {showTTSKey ? 'Hide' : 'Show'}
-              </button>
-            </div>
+            <Input
+              label="API Key"
+              type={showTTSKey ? 'text' : 'password'}
+              value={ttsConfig.customApiKey}
+              onChange={(value) => setTTSConfig({ ...ttsConfig, customApiKey: value })}
+              placeholder="Enter your API key"
+              endAdornment={
+                <button
+                  type="button"
+                  onClick={() => setShowTTSKey(!showTTSKey)}
+                  className="text-xs font-semibold text-primary-600 hover:text-primary-700 px-2 py-1 rounded-lg hover:bg-primary-50 transition-colors"
+                >
+                  {showTTSKey ? 'Hide' : 'Show'}
+                </button>
+              }
+            />
           </div>
         </Card>
 
-        {/* Provider Info */}
-        <Card className="p-5 bg-primary-50 border-primary-200">
-          <div className="space-y-3">
-            <div>
-              <h3 className="font-medium text-primary-900 flex items-center gap-2">
-                {currentAIProvider?.icon} {currentAIProvider?.name}
-              </h3>
-              <p className="text-sm text-primary-700">
-                {aiConfig.provider === 'gemini' && 'Google Gemini - Fast, multimodal AI with excellent language understanding.'}
-                {aiConfig.provider === 'openai' && 'OpenAI GPT - High-quality text generation and understanding.'}
-                {aiConfig.provider === 'anthropic' && 'Claude - Nuanced, helpful, and safe responses.'}
-                {aiConfig.provider === 'glm' && 'GLM (智谱) - Excellent Chinese language support.'}
-              </p>
-            </div>
-            <div>
-              <h3 className="font-medium text-primary-900">
-                {currentTTSProvider?.icon} {currentTTSProvider?.name}
-              </h3>
-              <p className="text-sm text-primary-700">
-                {ttsConfig.provider === 'gemini' && 'Gemini TTS - High-quality, natural-sounding speech synthesis.'}
-                {ttsConfig.provider === 'openai' && 'OpenAI TTS - Natural, expressive voices.'}
-                {ttsConfig.provider === 'glm' && 'GLM TTS - High-quality Chinese speech synthesis.'}
-                {ttsConfig.provider === 'azure' && 'Azure Speech - Enterprise-grade TTS with many voices.'}
-              </p>
-            </div>
-          </div>
-        </Card>
 
         {/* Save Button */}
         <Button
