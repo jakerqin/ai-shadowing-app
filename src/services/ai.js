@@ -14,9 +14,14 @@ export function getAIConfig() {
       if (provider) {
         const validModels = provider.models.map(m => m.id)
         if (!validModels.includes(config.model)) {
-          // Model no longer valid, use default
-          config.model = provider.defaultModel
+          // Model no longer valid, use first option
+          config.model = provider.models[0]?.id || ''
         }
+      } else {
+        const defaultProvider = Object.keys(AI_PROVIDERS)[0] || ''
+        const defaultModels = AI_PROVIDERS[defaultProvider]?.models || []
+        config.provider = defaultProvider
+        config.model = defaultModels[0]?.id || ''
       }
       
       return config
@@ -26,10 +31,11 @@ export function getAIConfig() {
   }
   
   // Default config - use values from AI_PROVIDERS (which reads from env)
-  const defaultProvider = 'gemini'
+  const defaultProvider = Object.keys(AI_PROVIDERS)[0] || ''
+  const defaultModels = AI_PROVIDERS[defaultProvider]?.models || []
   return {
     provider: defaultProvider,
-    model: AI_PROVIDERS[defaultProvider].defaultModel,
+    model: defaultModels[0]?.id || '',
     // Custom overrides (from settings page)
     customBaseUrl: '',
     customApiKey: '',

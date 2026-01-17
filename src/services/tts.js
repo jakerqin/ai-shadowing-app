@@ -3,6 +3,7 @@ import { getSpeechRate } from '../utils/helpers'
 
 // Audio cache to avoid re-generating same audio
 const audioCache = new Map()
+const DEFAULT_SEGMENT_MAX_CHARS = 240
 
 // Get TTS configuration from localStorage or defaults
 export function getTTSConfig() {
@@ -15,9 +16,12 @@ export function getTTSConfig() {
     }
   }
   
+  const defaultProvider = Object.keys(TTS_PROVIDERS)[0] || ''
+  const defaultVoices = TTS_PROVIDERS[defaultProvider]?.voices || []
+
   return {
-    provider: 'gemini',
-    voice: 'Kore',
+    provider: defaultProvider,
+    voice: defaultVoices[0]?.id || '',
     customBaseUrl: '',
     customApiKey: '',
   }
@@ -59,6 +63,7 @@ async function openaiTTS(text, options = {}) {
   const { baseUrl, apiKey } = getCredentials(config)
   const voice = options.voice || config.voice || 'alloy'
   const speed = options.speed || 1.0
+  const signal = options.signal
 
   // OpenAI TTS API: /v1/audio/speech
   const url = `${baseUrl}/v1/audio/speech`
@@ -69,8 +74,9 @@ async function openaiTTS(text, options = {}) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
+    signal,
     body: JSON.stringify({
-      model: 'tts-1',
+      model: 'gpt-4o-mini-tts',
       input: text,
       voice: voice,
       speed: speed,
@@ -92,6 +98,7 @@ async function glmTTS(text, options = {}) {
   const { baseUrl, apiKey } = getCredentials(config)
   const voice = options.voice || config.voice || 'female-1'
   const speed = options.speed || 1.0
+  const signal = options.signal
 
   // GLM TTS API format
   const url = `${baseUrl}/api/paas/v4/audio/speech`
@@ -102,6 +109,7 @@ async function glmTTS(text, options = {}) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
+    signal,
     body: JSON.stringify({
       model: 'tts-1',
       input: text,
@@ -123,6 +131,7 @@ async function azureTTS(text, options = {}) {
   const config = getTTSConfig()
   const { baseUrl, apiKey } = getCredentials(config)
   const voice = options.voice || config.voice || 'en-US-JennyNeural'
+  const signal = options.signal
 
   // Azure TTS uses SSML format
   const ssml = `<speak version='1.0' xml:lang='en-US'>
@@ -136,6 +145,7 @@ async function azureTTS(text, options = {}) {
       'Ocp-Apim-Subscription-Key': apiKey,
       'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
     },
+    signal,
     body: ssml,
   })
 
@@ -171,6 +181,7 @@ async function geminiTTS(text, options = {}) {
   const { baseUrl, apiKey, model } = getCredentials(config)
   const voice = options.voice || config.voice || 'Kore'
   const speed = options.speed || 1.0
+  const signal = options.signal
 
   // Gemini TTS API: /v1beta/models/{model}:generateContent
   const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`
@@ -207,6 +218,7 @@ async function geminiTTS(text, options = {}) {
     headers: {
       'Content-Type': 'application/json',
     },
+    signal,
     body: JSON.stringify(requestBody),
   })
 
@@ -361,6 +373,9 @@ export function playAudio(audioUrl, onEnd = null) {
 export function createAudioPlayer() {
   let currentAudio = null
   let isPlaying = false
+  let currentResolve = null
+  let currentReject = null
+  let currentOnStateChange = null
 
   return {
     async play(audioUrl, onStateChange = null) {
@@ -369,25 +384,37 @@ export function createAudioPlayer() {
       
       currentAudio = new Audio(audioUrl)
       isPlaying = true
+      currentOnStateChange = onStateChange
       
       if (onStateChange) onStateChange(true)
       
       return new Promise((resolve, reject) => {
+        currentResolve = resolve
+        currentReject = reject
         currentAudio.onended = () => {
           isPlaying = false
           if (onStateChange) onStateChange(false)
+          currentResolve = null
+          currentReject = null
+          currentOnStateChange = null
           resolve()
         }
         
         currentAudio.onerror = (error) => {
           isPlaying = false
           if (onStateChange) onStateChange(false)
+          currentResolve = null
+          currentReject = null
+          currentOnStateChange = null
           reject(error)
         }
         
         currentAudio.play().catch((error) => {
           isPlaying = false
           if (onStateChange) onStateChange(false)
+          currentResolve = null
+          currentReject = null
+          currentOnStateChange = null
           reject(error)
         })
       })
@@ -399,6 +426,11 @@ export function createAudioPlayer() {
         currentAudio.currentTime = 0
         currentAudio = null
         isPlaying = false
+        if (currentOnStateChange) currentOnStateChange(false)
+        if (currentResolve) currentResolve()
+        currentResolve = null
+        currentReject = null
+        currentOnStateChange = null
       }
     },
     
@@ -422,12 +454,161 @@ export function createAudioPlayer() {
   }
 }
 
+function normalizeTtsText(text) {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function chunkByLength(text, maxChars) {
+  const chunks = []
+  for (let i = 0; i < text.length; i += maxChars) {
+    chunks.push(text.slice(i, i + maxChars))
+  }
+  return chunks
+}
+
+function splitLongSegment(segment, maxChars) {
+  if (segment.length <= maxChars) return [segment]
+
+  const words = segment.split(' ')
+  if (words.length === 1) {
+    return chunkByLength(segment, maxChars)
+  }
+
+  const chunks = []
+  let buffer = ''
+  for (const word of words) {
+    const candidate = buffer ? `${buffer} ${word}` : word
+    if (candidate.length > maxChars) {
+      if (buffer) chunks.push(buffer)
+      buffer = word
+    } else {
+      buffer = candidate
+    }
+  }
+  if (buffer) chunks.push(buffer)
+  return chunks
+}
+
+function splitTextIntoSegments(text, maxChars = DEFAULT_SEGMENT_MAX_CHARS) {
+  const normalized = normalizeTtsText(text)
+  if (!normalized) return []
+
+  const rawSentences = normalized.match(/[^.!?。！？]+[.!?。！？]*/g) || [normalized]
+  const segments = []
+  let buffer = ''
+
+  for (const sentence of rawSentences) {
+    const trimmed = sentence.trim()
+    if (!trimmed) continue
+
+    if (trimmed.length > maxChars) {
+      const longParts = splitLongSegment(trimmed, maxChars)
+      for (const part of longParts) {
+        if (buffer) {
+          segments.push(buffer)
+          buffer = ''
+        }
+        segments.push(part)
+      }
+      continue
+    }
+
+    const candidate = buffer ? `${buffer} ${trimmed}` : trimmed
+    if (candidate.length > maxChars) {
+      if (buffer) segments.push(buffer)
+      buffer = trimmed
+    } else {
+      buffer = candidate
+    }
+  }
+
+  if (buffer) segments.push(buffer)
+  return segments
+}
+
 // Generate and play speech in one call
-export async function speakText(text, language, difficulty = 3, onStateChange = null) {
+export async function speakText(text, language, difficulty = 3, onStateChange = null, options = {}) {
   const speed = getSpeechRate(difficulty)
-  const audioUrl = await generateSpeech(text, language, { speed })
-  const player = createAudioPlayer()
-  return player.play(audioUrl, onStateChange)
+  const segments = options.segmented === false
+    ? [text]
+    : splitTextIntoSegments(text, options.maxChars || DEFAULT_SEGMENT_MAX_CHARS)
+  const player = options.player || createAudioPlayer()
+  const signal = options.signal
+  const prefetchCount = Math.max(1, Math.floor(options.prefetchCount || 2))
+  const maxConcurrency = Math.max(1, Math.floor(options.maxConcurrency || 2))
+
+  if (!segments.length || signal?.aborted) return
+
+  if (onStateChange) onStateChange(true)
+
+  try {
+    let nextIndexToFetch = 0
+    let nextIndexToPlay = 0
+    let inFlightCount = 0
+    let fetchError = null
+    const started = new Array(segments.length).fill(false)
+    const deferreds = segments.map(() => {
+      let resolve
+      let reject
+      const promise = new Promise((innerResolve, innerReject) => {
+        resolve = innerResolve
+        reject = innerReject
+      })
+      return { promise, resolve, reject }
+    })
+
+    const startFetch = (index) => {
+      if (started[index] || signal?.aborted || fetchError) return
+      started[index] = true
+      inFlightCount += 1
+      generateSpeech(segments[index], language, { speed, signal })
+        .then((audioUrl) => {
+          deferreds[index].resolve(audioUrl)
+        })
+        .catch((error) => {
+          if (!signal?.aborted && !fetchError) {
+            fetchError = error
+          }
+          deferreds[index].reject(error)
+        })
+        .finally(() => {
+          inFlightCount -= 1
+          scheduleFetches()
+        })
+    }
+
+    const scheduleFetches = () => {
+      if (signal?.aborted || fetchError) return
+      while (
+        nextIndexToFetch < segments.length &&
+        (nextIndexToFetch - nextIndexToPlay) < prefetchCount &&
+        inFlightCount < maxConcurrency
+      ) {
+        const index = nextIndexToFetch
+        nextIndexToFetch += 1
+        startFetch(index)
+      }
+    }
+
+    scheduleFetches()
+
+    for (nextIndexToPlay = 0; nextIndexToPlay < segments.length; nextIndexToPlay += 1) {
+      if (signal?.aborted) break
+      scheduleFetches()
+      let audioUrl
+      try {
+        audioUrl = await deferreds[nextIndexToPlay].promise
+      } catch (error) {
+        if (signal?.aborted) break
+        throw error
+      }
+      if (signal?.aborted) break
+      await player.play(audioUrl)
+      scheduleFetches()
+    }
+  } finally {
+    if (onStateChange) onStateChange(false)
+  }
 }
 
 // Clear audio cache

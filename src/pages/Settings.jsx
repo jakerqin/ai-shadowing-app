@@ -42,7 +42,7 @@ export default function Settings() {
     setAIConfig({
       ...aiConfig,
       provider: providerId,
-      model: provider.defaultModel,
+      model: provider?.models?.[0]?.id || '',
     })
   }
 
@@ -51,7 +51,7 @@ export default function Settings() {
     setTTSConfig({
       ...ttsConfig,
       provider: providerId,
-      voice: provider.defaultVoice,
+      voice: provider?.voices?.[0]?.id || '',
     })
   }
 

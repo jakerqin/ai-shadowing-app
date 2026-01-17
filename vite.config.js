@@ -9,5 +9,5 @@ export default defineConfig({
     host: true
   },
   // Expose environment variables without VITE_ prefix
-  envPrefix: ['VITE_', 'GEMINI_', 'OPENAI_', 'ANTHROPIC_', 'GLM_', 'TTS_'],
+  envPrefix: ['VITE_', 'AI_', 'GEMINI_', 'OPENAI_', 'ANTHROPIC_', 'GLM_', 'TTS_'],
 })

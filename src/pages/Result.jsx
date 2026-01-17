@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { useApp } from '../store/AppContext'
-import { generateContentStream, translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
+import { generateContent, translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
 import { speakText, generateSpeech, createAudioPlayer } from '../services/tts'
 import { LANGUAGES, SCENES } from '../utils/constants'
 import { tokenizeText, getLanguageName, generateId } from '../utils/helpers'
@@ -29,6 +29,8 @@ export default function Result() {
   const [saved, setSaved] = useState(false)
   
   const audioPlayerRef = useRef(createAudioPlayer())
+  const fullSpeechPlayerRef = useRef(createAudioPlayer())
+  const fullSpeechAbortRef = useRef(null)
   const chatEndRef = useRef(null)
   const hasStartedRef = useRef(false)
   const abortControllerRef = useRef(null)
@@ -157,26 +159,25 @@ export default function Result() {
       const targetLanguage = getLanguageName(settings.targetLanguage, LANGUAGES)
       const nativeLanguage = getLanguageName(settings.nativeLanguage, LANGUAGES)
 
-      await generateContentStream(
-        {
-          targetLanguage,
-          nativeLanguage,
-          difficulty: settings.difficulty,
-          scene: settings.scene,
-          length: settings.length,
-        },
-        (chunk) => {
-          if (activeGenerationIdRef.current !== generationId) return
-          pendingTextRef.current += chunk
-          startTypewriter(generationId)
-        },
-        { signal: controller.signal },
-      )
+      const text = await generateContent({
+        targetLanguage,
+        nativeLanguage,
+        difficulty: settings.difficulty,
+        scene: settings.scene,
+        length: settings.length,
+      })
 
-      streamDoneRef.current = true
-      if (!pendingTextRef.current.length) {
-        finalizeStream(generationId)
+      if (controller.signal.aborted || activeGenerationIdRef.current !== generationId) return
+
+      if (!text) {
+        actions.setGenerationError('Empty response from provider')
+        actions.setGenerating(false)
+        return
       }
+
+      pendingTextRef.current = text
+      streamDoneRef.current = true
+      startTypewriter(generationId)
     } catch (error) {
       if (controller.signal.aborted) return
       stopTypewriter()
@@ -187,32 +188,50 @@ export default function Result() {
     }
   }
 
+  const stopFullSpeech = () => {
+    if (fullSpeechAbortRef.current) {
+      fullSpeechAbortRef.current.abort()
+      fullSpeechAbortRef.current = null
+    }
+    fullSpeechPlayerRef.current.stop()
+    actions.setPlaying(false)
+  }
+
   // Play full text
   const handlePlayFull = async () => {
     if (isStreaming || !contentText) return
     if (isPlaying) {
-      audioPlayerRef.current.stop()
-      actions.setPlaying(false)
+      stopFullSpeech()
       return
     }
 
     try {
-      actions.setPlaying(true)
+      const controller = new AbortController()
+      fullSpeechAbortRef.current = controller
       await speakText(
         currentContent.text, 
         settings.targetLanguage, 
         settings.difficulty,
-        (playing) => actions.setPlaying(playing)
+        (playing) => actions.setPlaying(playing),
+        {
+          segmented: true,
+          maxChars: 240,
+          signal: controller.signal,
+          player: fullSpeechPlayerRef.current,
+        }
       )
     } catch (error) {
       console.error('Playback failed:', error)
       actions.setPlaying(false)
+    } finally {
+      fullSpeechAbortRef.current = null
     }
   }
 
   // Play single word
   const handlePlayWord = async (word) => {
     if (isStreaming || !contentText) return
+    if (isPlaying) stopFullSpeech()
     if (playingWord === word) {
       audioPlayerRef.current.stop()
       setPlayingWord(null)
@@ -372,13 +391,21 @@ export default function Result() {
       actions.resetContent()
       actions.setGenerating(false)
     }
+    if (isPlaying) {
+      stopFullSpeech()
+    }
     navigate('/')
   }
 
   return (
-    <div className="page-container bg-gray-50 min-h-screen">
+    <div className="page-container relative overflow-hidden bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 min-h-screen">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-20 -left-10 h-72 w-72 rounded-full bg-fuchsia-500/30 blur-3xl" />
+        <div className="absolute top-1/4 -right-24 h-80 w-80 rounded-full bg-indigo-400/30 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
+      </div>
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
+      <header className="relative z-10 bg-white/80 backdrop-blur-xl border-b border-white/30 shadow-sm sticky top-0">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
           <button 
             onClick={handleExit}
@@ -402,10 +429,10 @@ export default function Result() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-lg mx-auto px-4 py-6">
+      <main className="relative z-10 max-w-lg mx-auto px-4 py-6">
 
         {generationError && (
-          <Card className="p-4 mb-4 border-red-200 bg-red-50">
+          <Card className="p-4 mb-4 border-red-200 bg-red-50/95 shadow-md">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-red-600">Generation Failed</p>
@@ -418,60 +445,96 @@ export default function Result() {
           </Card>
         )}
         
-        {/* Play Button */}
-        <div className="flex justify-center mb-6">
+        {/* Controls */}
+        <div className="flex items-center justify-center gap-3 mb-5">
           <button
             onClick={handlePlayFull}
             disabled={isStreaming || !contentText}
-            className="relative w-20 h-20 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+            title={isPlaying ? 'Pause' : 'Play'}
+            className="relative w-14 h-14 bg-gradient-to-br from-primary-500 to-secondary-500 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
             {isPlaying && <div className="pulse-ring" />}
             {isPlaying ? (
-              <Pause className="w-8 h-8 text-white" />
+              <Pause className="w-6 h-6 text-white" />
             ) : (
-              <Play className="w-8 h-8 text-white ml-1" />
+              <Play className="w-6 h-6 text-white ml-0.5" />
             )}
+          </button>
+
+          <button
+            onClick={handleTranslate}
+            disabled={isStreaming || !contentText || isTranslating}
+            title={showTranslation ? 'Hide Translation' : 'Translate'}
+            className={`w-11 h-11 rounded-full border border-gray-200 bg-white/90 shadow-sm flex items-center justify-center transition-all duration-200 ${showTranslation ? 'text-primary-600 border-primary-200' : 'text-gray-600'} ${isStreaming || !contentText || isTranslating ? 'opacity-60 cursor-not-allowed' : 'hover:text-primary-600 hover:border-primary-200 hover:shadow-md'}`}
+          >
+            {isTranslating ? (
+              <Spinner size="sm" />
+            ) : (
+              <Languages className="w-5 h-5" />
+            )}
+          </button>
+
+          <button
+            onClick={handleSave}
+            disabled={saved || isStreaming || !currentContent}
+            title={saved ? 'Saved' : 'Save'}
+            className={`w-11 h-11 rounded-full border border-gray-200 bg-white/90 shadow-sm flex items-center justify-center transition-all duration-200 ${saved ? 'text-primary-600 border-primary-200' : 'text-gray-600'} ${saved || isStreaming || !currentContent ? 'opacity-60 cursor-not-allowed' : 'hover:text-primary-600 hover:border-primary-200 hover:shadow-md'}`}
+          >
+            {saved ? <Check className="w-5 h-5" /> : <BookmarkPlus className="w-5 h-5" />}
           </button>
         </div>
 
         {/* Text Content */}
-        <Card className="p-3 mb-3">
+        <Card className="p-4 mb-4 bg-white/95 border-white/70 shadow-xl backdrop-blur-sm">
+          {isStreaming && (
+            <div className="flex items-center gap-2 text-xs text-gray-400 mb-3">
+              <Spinner size="sm" />
+              <span>Generating content...</span>
+            </div>
+          )}
           <div
             className={`text-sm leading-snug break-words ${isStreaming ? 'select-none pointer-events-none' : ''}`}
             style={{ letterSpacing: isCJKLanguage ? '0' : '-0.01em' }}
             onMouseUp={handleTextSelection}
             onTouchEnd={handleTextSelection}
           >
-            {!contentText && isStreaming && (
-              <span className="text-xs text-gray-400">Generating...</span>
+            {!contentText && isStreaming ? (
+              <div className="space-y-2 animate-pulse">
+                <div className="h-2.5 bg-gray-200 rounded-full w-11/12" />
+                <div className="h-2.5 bg-gray-200 rounded-full w-10/12" />
+                <div className="h-2.5 bg-gray-200 rounded-full w-9/12" />
+              </div>
+            ) : (
+              <>
+                {tokens.map((token, index) => {
+                  if (token === '\n') {
+                    return <br key={index} />
+                  }
+                  
+                  // Check if next token is newline or end of array (no space needed after)
+                  const nextToken = tokens[index + 1]
+                  const needsSpace = !isCJKLanguage && nextToken && nextToken !== '\n'
+                  
+                  return (
+                    <span
+                      key={index}
+                      className="word-token cursor-pointer active:bg-primary-100 rounded-sm transition-colors"
+                      onClick={() => handlePlayWord(token)}
+                      onDoubleClick={() => handleExplainWord(token)}
+                    >
+                      <span className={playingWord === token ? 'text-primary-600 font-medium' : ''}>
+                        {token}
+                      </span>
+                      {playingWord === token && (
+                        <Volume2 className="w-2.5 h-2.5 text-primary-500 inline ml-px" />
+                      )}
+                      {needsSpace && ' '}
+                    </span>
+                  )
+                })}
+                {isStreaming && <span className="typewriter-cursor" />}
+              </>
             )}
-            {tokens.map((token, index) => {
-              if (token === '\n') {
-                return <br key={index} />
-              }
-              
-              // Check if next token is newline or end of array (no space needed after)
-              const nextToken = tokens[index + 1]
-              const needsSpace = !isCJKLanguage && nextToken && nextToken !== '\n'
-              
-              return (
-                <span
-                  key={index}
-                  className="word-token cursor-pointer active:bg-primary-100 rounded-sm transition-colors"
-                  onClick={() => handlePlayWord(token)}
-                  onDoubleClick={() => handleExplainWord(token)}
-                >
-                  <span className={playingWord === token ? 'text-primary-600 font-medium' : ''}>
-                    {token}
-                  </span>
-                  {playingWord === token && (
-                    <Volume2 className="w-2.5 h-2.5 text-primary-500 inline ml-px" />
-                  )}
-                  {needsSpace && ' '}
-                </span>
-              )
-            })}
-            {isStreaming && <span className="typewriter-cursor" />}
           </div>
           
           {/* Translation */}
@@ -495,7 +558,7 @@ export default function Result() {
 
         {/* Selected Text Actions */}
         {selectedText && !isStreaming && (
-          <Card className="p-3 mb-4 bg-primary-50 border-primary-200 animate-slide-up">
+          <Card className="p-3 mb-4 bg-white/90 border-white/70 shadow-md animate-slide-up">
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-500">Selected:</p>
@@ -526,39 +589,6 @@ export default function Result() {
             </div>
           </Card>
         )}
-
-        {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <Button
-            variant="secondary"
-            onClick={handleTranslate}
-            loading={isTranslating}
-            disabled={isStreaming || !contentText}
-            className="justify-center"
-          >
-            <Languages className="w-4 h-4 mr-2" />
-            {showTranslation ? 'Hide' : 'Translate'}
-          </Button>
-          
-          <Button
-            variant={saved ? 'primary' : 'secondary'}
-            onClick={handleSave}
-            disabled={saved || isStreaming || !currentContent}
-            className="justify-center"
-          >
-            {saved ? (
-              <>
-                <Check className="w-4 h-4 mr-2" />
-                Saved!
-              </>
-            ) : (
-              <>
-                <BookmarkPlus className="w-4 h-4 mr-2" />
-                Save
-              </>
-            )}
-          </Button>
-        </div>
 
       </main>
 

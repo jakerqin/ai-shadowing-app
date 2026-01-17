@@ -40,155 +40,118 @@ export const LENGTH_OPTIONS = [
   { id: 'long', name: 'Long', description: '7-10 sentences', wordCount: '100-150 words' },
 ]
 
-// Parse models from env string (format: "id,id,id,...")
-function parseModelsFromEnv(envString, defaultModels) {
+function parseDelimitedList(envString) {
   if (!envString || envString.trim() === '') {
-    return defaultModels
+    return []
   }
-  
-  try {
-    return envString.split(',').map(id => {
-      const trimmedId = id.trim()
-      return { id: trimmedId, name: trimmedId }
-    }).filter(m => m.id)
-  } catch {
-    return defaultModels
-  }
+  return envString.split(',').map(item => item.trim()).filter(Boolean)
 }
 
-// Default model configurations (fallback when env not set)
-const DEFAULT_MODELS = {
-  gemini: [
-    { id: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-  ],
-  openai: [
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-  ],
-  anthropic: [
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
-    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
-    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku' },
-  ],
-  glm: [
-    { id: 'glm-4-flash', name: 'GLM-4 Flash' },
-    { id: 'glm-4', name: 'GLM-4' },
-    { id: 'glm-4-plus', name: 'GLM-4 Plus' },
-  ],
+function parseIdNameList(envString) {
+  return parseDelimitedList(envString).map((entry) => {
+    const [idPart, namePart] = entry.split('|')
+    const id = (idPart || '').trim()
+    if (!id) return null
+    const name = (namePart || '').trim() || id
+    return { id, name }
+  }).filter(Boolean)
 }
 
-// Get models from env or use defaults
+function parseIdNameIconList(envString) {
+  return parseDelimitedList(envString).map((entry) => {
+    const [idPart, namePart, iconPart] = entry.split('|')
+    const id = (idPart || '').trim()
+    if (!id) return null
+    const name = (namePart || '').trim() || id
+    const icon = (iconPart || '').trim() || ''
+    return { id, name, icon }
+  }).filter(Boolean)
+}
+
+function getFirstId(items) {
+  return items[0]?.id || ''
+}
+
+// Get models from env (format: "id|name,id|name,...")
 const getProviderModels = (provider) => {
   const envKey = `${provider.toUpperCase()}_MODELS`
-  const envModels = import.meta.env[envKey] || ''
-  return parseModelsFromEnv(envModels, DEFAULT_MODELS[provider])
+  return parseIdNameList(import.meta.env[envKey] || '')
 }
 
-// Get default model from env or use first model in list
-const getDefaultModel = (provider, models) => {
-  const envKey = `${provider.toUpperCase()}_DEFAULT_MODEL`
-  const envDefault = import.meta.env[envKey] || ''
-  if (envDefault && models.some(m => m.id === envDefault)) {
-    return envDefault
-  }
-  return models[0]?.id || ''
+const getAiProviderList = () => {
+  return parseIdNameIconList(import.meta.env.AI_PROVIDERS || '')
+}
+
+const DEFAULT_TTS_VOICES = {
+  gemini: [
+    { id: 'Zephyr', name: 'Zephyr (Bright)' },
+    { id: 'Puck', name: 'Puck (Upbeat)' },
+    { id: 'Charon', name: 'Charon (Informative)' },
+    { id: 'Kore', name: 'Kore (Firm)' },
+    { id: 'Fenrir', name: 'Fenrir (Excitable)' },
+    { id: 'Leda', name: 'Leda (Youthful)' },
+    { id: 'Orus', name: 'Orus (Firm)' },
+    { id: 'Aoede', name: 'Aoede (Breezy)' },
+  ],
+  glm: [
+    { id: 'male-1', name: 'Male Voice 1' },
+    { id: 'female-1', name: 'Female Voice 1' },
+  ],
+  openai: [
+    { id: 'alloy', name: 'Alloy' },
+    { id: 'ash', name: 'Ash' },
+    { id: 'ballad', name: 'Ballad' },
+    { id: 'coral', name: 'Coral' },
+    { id: 'cedar', name: 'Cedar' },
+    { id: 'echo', name: 'Echo' },
+    { id: 'fable', name: 'Fable' },
+    { id: 'marin', name: 'Marin' },
+    { id: 'sage', name: 'Sage' },
+    { id: 'verse', name: 'Verse' },
+    { id: 'onyx', name: 'Onyx' },
+    { id: 'nova', name: 'Nova' },
+    { id: 'shimmer', name: 'Shimmer' },
+  ],
+  azure: [
+    { id: 'en-US-JennyNeural', name: 'Jenny (English)' },
+    { id: 'zh-CN-XiaoxiaoNeural', name: 'Xiaoxiao (Chinese)' },
+  ],
+}
+
+const getTtsVoices = (providerId) => {
+  const envKey = `TTS_VOICES_${providerId.toUpperCase()}`
+  const envVoices = parseIdNameList(import.meta.env[envKey] || '')
+  if (envVoices.length) return envVoices
+  return DEFAULT_TTS_VOICES[providerId] || []
+}
+
+const getTtsProviderList = () => {
+  return parseIdNameIconList(import.meta.env.TTS_PROVIDERS || '')
 }
 
 // Build AI Providers configuration dynamically
 const buildAIProviders = () => {
-  const providers = {
-    gemini: {
-      id: 'gemini',
-      name: 'Google Gemini',
-      icon: '✨',
-    },
-    openai: {
-      id: 'openai',
-      name: 'OpenAI',
-      icon: '🤖',
-    },
-    anthropic: {
-      id: 'anthropic',
-      name: 'Anthropic Claude',
-      icon: '🧠',
-    },
-    glm: {
-      id: 'glm',
-      name: 'GLM (智谱)',
-      icon: '🔮',
-    },
-  }
-
-  // Add models and defaultModel to each provider
-  for (const [key, provider] of Object.entries(providers)) {
-    provider.models = getProviderModels(key)
-    provider.defaultModel = getDefaultModel(key, provider.models)
-  }
-
-  return providers
+  const providerList = getAiProviderList()
+  return providerList.reduce((acc, provider) => {
+    acc[provider.id] = {
+      ...provider,
+      models: getProviderModels(provider.id),
+    }
+    return acc
+  }, {})
 }
 
-// AI Providers configuration (loaded from env or defaults)
+// AI Providers configuration (loaded from env)
 export const AI_PROVIDERS = buildAIProviders()
 
-// TTS Providers configuration
-export const TTS_PROVIDERS = {
-  gemini: {
-    id: 'gemini',
-    name: 'Gemini TTS',
-    icon: '✨',
-    voices: [
-      { id: 'Zephyr', name: 'Zephyr (Bright)' },
-      { id: 'Puck', name: 'Puck (Upbeat)' },
-      { id: 'Charon', name: 'Charon (Informative)' },
-      { id: 'Kore', name: 'Kore (Firm)' },
-      { id: 'Fenrir', name: 'Fenrir (Excitable)' },
-      { id: 'Leda', name: 'Leda (Youthful)' },
-      { id: 'Orus', name: 'Orus (Firm)' },
-      { id: 'Aoede', name: 'Aoede (Breezy)' },
-    ],
-    defaultVoice: 'Kore',
-  },
-  glm: {
-    id: 'glm',
-    name: 'GLM-TTS (智谱)',
-    icon: '🎙️',
-    voices: [
-      { id: 'male-1', name: 'Male Voice 1' },
-      { id: 'female-1', name: 'Female Voice 1' },
-    ],
-    defaultVoice: 'female-1',
-  },
-  openai: {
-    id: 'openai',
-    name: 'OpenAI TTS',
-    icon: '🔊',
-    voices: [
-      { id: 'alloy', name: 'Alloy' },
-      { id: 'echo', name: 'Echo' },
-      { id: 'fable', name: 'Fable' },
-      { id: 'onyx', name: 'Onyx' },
-      { id: 'nova', name: 'Nova' },
-      { id: 'shimmer', name: 'Shimmer' },
-    ],
-    defaultVoice: 'alloy',
-  },
-  azure: {
-    id: 'azure',
-    name: 'Azure Speech',
-    icon: '☁️',
-    voices: [
-      { id: 'en-US-JennyNeural', name: 'Jenny (English)' },
-      { id: 'zh-CN-XiaoxiaoNeural', name: 'Xiaoxiao (Chinese)' },
-    ],
-    defaultVoice: 'en-US-JennyNeural',
-  },
-}
+// TTS Providers configuration (loaded from env)
+export const TTS_PROVIDERS = getTtsProviderList().reduce((acc, provider) => {
+  acc[provider.id] = {
+    ...provider,
+    voices: getTtsVoices(provider.id),
+  }
+  return acc
+}, {})
 
 // Storage keys
 export const STORAGE_KEYS = {
@@ -224,6 +187,6 @@ export const getEnvConfig = () => ({
   geminiTts: {
     baseUrl: import.meta.env.GEMINI_TTS_BASE_URL || '',
     apiKey: import.meta.env.GEMINI_TTS_API_KEY || '',
-    model: import.meta.env.GEMINI_TTS_DEFAULT_MODEL || 'gemini-2.5-flash-preview-tts',
+    model: getFirstId(parseIdNameList(import.meta.env.GEMINI_TTS_MODELS || '')),
   },
 })
