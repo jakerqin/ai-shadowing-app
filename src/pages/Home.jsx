@@ -3,8 +3,9 @@ import { useApp } from '../store/AppContext'
 import { LANGUAGES, SCENES, LENGTH_OPTIONS, DIFFICULTY_LEVELS, AI_PROVIDERS, TTS_PROVIDERS } from '../utils/constants'
 import { getAIConfig } from '../services/ai'
 import { getTTSConfig } from '../services/tts'
+import { getNextSuggestedExercise } from '../utils/planHelpers'
 import { Button, Card, Select, Slider, Badge } from '../components/UI'
-import { BookOpen, Sparkles, ArrowRight, Volume2, Settings } from 'lucide-react'
+import { BookOpen, Sparkles, ArrowRight, Volume2, Settings, Target, TrendingUp } from 'lucide-react'
 
 export default function Home() {
   const navigate = useNavigate()
@@ -21,6 +22,24 @@ export default function Home() {
     actions.setGenerating(true)
     navigate('/result')
   }
+
+  // 处理学习计划练习开始
+  const handleStartPlanExercise = (suggestion) => {
+    actions.setCurrentContent({
+      text: suggestion.exercise.text,
+      difficulty: suggestion.exercise.difficulty,
+      scene: 'learning-plan',
+      length: 'custom',
+      moduleId: suggestion.module.id,
+      exerciseId: suggestion.exercise.id,
+      exerciseTitle: suggestion.exercise.title,
+      moduleName: suggestion.module.name,
+    })
+    navigate('/result')
+  }
+
+  // 获取下一个建议练习
+  const nextSuggestion = state.learningPlan ? getNextSuggestedExercise(state.learningPlan) : null
 
   const languageOptions = LANGUAGES.map(lang => ({
     value: lang.code,
@@ -83,9 +102,152 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="max-w-lg mx-auto px-4 -mt-4 pb-8">
+        {/* Learning Plan Section (如果存在学习计划) */}
+        {state.learningPlan && (
+          <>
+            <Card className="p-5 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Target className="w-5 h-5 text-primary-600" />
+                  我的学习计划
+                </h2>
+                <button
+                  onClick={() => navigate('/my-plan')}
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  查看全部 →
+                </button>
+              </div>
+
+              <p className="text-gray-700 mb-3">{state.learningPlan.title}</p>
+
+              {/* Progress Bar */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-sm mb-2">
+                  <span className="text-gray-600">总进度</span>
+                  <span className="font-semibold text-primary-600">
+                    {state.learningPlan.overallProgress?.completedExercises || 0}/{state.learningPlan.overallProgress?.totalExercises || 0} ({state.learningPlan.overallProgress?.percentage || 0}%)
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary-500 transition-all duration-500"
+                    style={{ width: `${state.learningPlan.overallProgress?.percentage || 0}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Next Suggested Exercise */}
+              {nextSuggestion ? (
+                <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-4 rounded-xl border-2 border-primary-200">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <p className="text-xs text-primary-600 font-semibold mb-1">💡 今日建议练习</p>
+                      <p className="font-semibold text-gray-900">
+                        {nextSuggestion.module.name} - {nextSuggestion.exercise.title}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-600 mb-3">
+                    <span>⏱️ 约{nextSuggestion.exercise.estimatedMinutes}分钟</span>
+                    <span>难度: {'⭐'.repeat(nextSuggestion.exercise.difficulty)}</span>
+                  </div>
+                  <Button
+                    variant="accent"
+                    size="md"
+                    className="w-full"
+                    onClick={() => handleStartPlanExercise(nextSuggestion)}
+                  >
+                    开始练习
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="bg-green-50 p-4 rounded-xl border-2 border-green-200 text-center">
+                  <p className="text-green-800 font-semibold mb-1">🎉 恭喜！</p>
+                  <p className="text-sm text-green-700">您已完成所有练习</p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <button
+                  onClick={() => navigate('/my-plan')}
+                  className="px-3 py-2 text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors"
+                >
+                  查看完整计划
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('创建新计划将会覆盖当前计划，是否继续？')) {
+                      actions.resetPlan()
+                      navigate('/create-plan')
+                    }
+                  }}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  修改计划
+                </button>
+              </div>
+            </Card>
+
+            {/* Separator */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 h-px bg-gray-300" />
+              <span className="text-sm text-gray-500">或者</span>
+              <div className="flex-1 h-px bg-gray-300" />
+            </div>
+          </>
+        )}
+
+        {/* No Plan: Create Plan CTA */}
+        {!state.learningPlan && (
+          <Card className="p-6 mb-4 text-center bg-gradient-to-br from-primary-50 to-secondary-50 border-2 border-primary-200">
+            <div className="text-4xl mb-3">🎯</div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+              系统化学习，事半功倍
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              告诉我你的学习目标，我会为你生成个性化的学习计划
+            </p>
+            <Button
+              variant="accent"
+              size="lg"
+              onClick={() => navigate('/create-plan')}
+            >
+              <Sparkles className="w-5 h-5 mr-2" />
+              创建学习计划
+            </Button>
+
+            {/* Separator */}
+            <div className="flex items-center gap-3 mt-6 mb-2">
+              <div className="flex-1 h-px bg-gray-300" />
+              <span className="text-sm text-gray-500">或</span>
+              <div className="flex-1 h-px bg-gray-300" />
+            </div>
+          </Card>
+        )}
+
+        {/* Quick Practice Button */}
+        <Card className="p-5 mb-4 text-center">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">
+            {state.learningPlan ? '快速练习' : '快速开始'}
+          </h3>
+          <Button
+            variant="secondary"
+            size="lg"
+            className="w-full"
+            onClick={handleStart}
+          >
+            🎲 随机练习一个场景
+            <ArrowRight className="w-5 h-5 ml-2" />
+          </Button>
+        </Card>
+
+        {/* Language Settings */}
         <Card className="p-5 mb-4">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Language Settings</h2>
-          
+
           {/* Native Language */}
           <Select
             label="Your Native Language"
@@ -94,7 +256,7 @@ export default function Home() {
             options={languageOptions}
             className="mb-4"
           />
-          
+
           {/* Target Language */}
           <Select
             label="Language to Practice"
@@ -103,7 +265,7 @@ export default function Home() {
             options={languageOptions}
             className="mb-4"
           />
-          
+
           {/* Difficulty */}
           <Slider
             label="Difficulty Level"
@@ -114,7 +276,7 @@ export default function Home() {
             valueLabels={difficultyLabels}
             className="mb-2"
           />
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-gray-500">
             {DIFFICULTY_LEVELS.find(d => d.level === settings.difficulty)?.description}
           </p>
         </Card>
@@ -170,16 +332,18 @@ export default function Home() {
           </div>
         </Card>
 
-        {/* Start Button */}
-        <Button
-          variant="accent"
-          size="xl"
-          className="w-full"
-          onClick={handleStart}
-        >
-          Generate Content
-          <ArrowRight className="w-5 h-5 ml-2" />
-        </Button>
+        {/* Start Button (只在没有学习计划时显示) */}
+        {!state.learningPlan && (
+          <Button
+            variant="accent"
+            size="xl"
+            className="w-full"
+            onClick={handleStart}
+          >
+            Generate Content
+            <ArrowRight className="w-5 h-5 ml-2" />
+          </Button>
+        )}
       </main>
     </div>
   )
