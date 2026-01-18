@@ -413,6 +413,17 @@ export default function Result() {
   const handleSave = () => {
     if (isStreaming || !currentContent) return
     actions.addToNotebook()
+
+    // Mark exercise as completed if it's from learning plan
+    if (currentContent?.scene === 'learning-plan' &&
+        currentContent?.moduleId &&
+        currentContent?.exerciseId) {
+      actions.completeExercise(
+        currentContent.moduleId,
+        currentContent.exerciseId
+      )
+    }
+
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -434,6 +445,17 @@ export default function Result() {
     if (isPlaying) {
       stopFullSpeech()
     }
+
+    // Mark exercise as completed if it's from learning plan
+    if (currentContent?.scene === 'learning-plan' &&
+        currentContent?.moduleId &&
+        currentContent?.exerciseId) {
+      actions.completeExercise(
+        currentContent.moduleId,
+        currentContent.exerciseId
+      )
+    }
+
     navigate('/')
   }
 
