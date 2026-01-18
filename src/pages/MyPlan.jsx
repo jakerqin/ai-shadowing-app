@@ -6,7 +6,7 @@ import { ArrowLeft, Check, Circle, Trash2, PlusCircle, Clock } from 'lucide-reac
 export default function MyPlan() {
   const navigate = useNavigate()
   const { state, actions } = useApp()
-  const { learningPlan, settings } = state
+  const { learningPlan } = state
 
   // 如果没有学习计划，显示空状态
   if (!learningPlan) {
