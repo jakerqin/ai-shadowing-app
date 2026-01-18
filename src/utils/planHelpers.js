@@ -11,6 +11,8 @@ export function getNextSuggestedExercise(plan) {
   if (!plan || !plan.modules) return null
 
   for (const module of plan.modules) {
+    if (!module.exercises) continue  // 跳过没有exercises的模块
+
     const nextExercise = module.exercises.find(ex => !ex.completed)
     if (nextExercise) {
       return {
