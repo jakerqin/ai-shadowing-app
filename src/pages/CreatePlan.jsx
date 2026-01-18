@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../store/AppContext'
 import { generateLearningPlan } from '../services/planGenerator'
@@ -13,6 +13,15 @@ export default function CreatePlan() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState(null)
   const [progressMessage, setProgressMessage] = useState('')
+
+  // 防止组件卸载后的状态更新（内存泄漏）
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const examples = [
     '我想在2周内准备雅思口语考试',
@@ -37,6 +46,8 @@ export default function CreatePlan() {
         settings.nativeLanguage,
         settings.targetLanguage,
         (progress) => {
+          if (!isMountedRef.current) return
+
           if (progress.type === 'chunk') {
             setProgressMessage('正在生成学习计划...')
           } else if (progress.type === 'parsing') {
@@ -45,17 +56,23 @@ export default function CreatePlan() {
         }
       )
 
+      if (!isMountedRef.current) return
+
       // 保存计划到state（会自动保存到localStorage）
       actions.setLearningPlan(plan)
 
       // 跳转到预览页面
       navigate('/plan-preview')
     } catch (err) {
+      if (!isMountedRef.current) return
+
       console.error('生成计划失败:', err)
       setError(err.message || '生成计划失败，请稍后重试')
     } finally {
-      setIsGenerating(false)
-      setProgressMessage('')
+      if (isMountedRef.current) {
+        setIsGenerating(false)
+        setProgressMessage('')
+      }
     }
   }
 
@@ -106,7 +123,10 @@ export default function CreatePlan() {
           {/* Input */}
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              if (error) setError(null)
+            }}
             disabled={isGenerating}
             placeholder="请详细描述您的学习目标，包括学习场景、时间计划、重点领域等..."
             className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl resize-none focus:outline-none focus:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
