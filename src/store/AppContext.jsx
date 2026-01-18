@@ -200,11 +200,14 @@ function appReducer(state, action) {
       if (!state.learningPlan) return state
 
       const { moduleId, exerciseId } = action.payload
+      let exerciseFound = false
+
       const updatedModules = state.learningPlan.modules.map(module => {
         if (module.id !== moduleId) return module
 
         const updatedExercises = module.exercises.map(exercise => {
           if (exercise.id !== exerciseId) return exercise
+          exerciseFound = true
           return {
             ...exercise,
             completed: true,
@@ -218,11 +221,15 @@ function appReducer(state, action) {
           ...module,
           exercises: updatedExercises,
           progress: {
-            total: module.exercises.length,
+            total: updatedExercises.length,
             completed: completedCount,
           }
         }
       })
+
+      if (!exerciseFound && import.meta.env.DEV) {
+        console.warn(`Exercise ${exerciseId} in module ${moduleId} not found`)
+      }
 
       const totalExercises = updatedModules.reduce((sum, m) => sum + m.exercises.length, 0)
       const completedExercises = updatedModules.reduce((sum, m) => sum + m.progress.completed, 0)
