@@ -83,6 +83,11 @@ function parseAIPlanResponse(response) {
  * @returns {Object} - 完整的学习计划对象
  */
 function buildPlanObject(planData, userInput, nativeLanguage, targetLanguage) {
+  // 添加数据结构验证
+  if (!planData || !Array.isArray(planData.modules)) {
+    throw new Error('无效的计划数据结构:缺少 modules 数组')
+  }
+
   const planId = `plan_${Date.now()}`
 
   const modules = planData.modules.map((module, moduleIndex) => {
@@ -136,6 +141,14 @@ function buildPlanObject(planData, userInput, nativeLanguage, targetLanguage) {
  * @returns {Promise<Object>} - 生成的学习计划对象
  */
 export async function generateLearningPlan(userInput, nativeLanguage, targetLanguage, onProgress) {
+  // 添加输入验证
+  if (!userInput || !userInput.trim()) {
+    throw new Error('用户输入不能为空')
+  }
+  if (!nativeLanguage || !targetLanguage) {
+    throw new Error('语言参数不能为空')
+  }
+
   const prompt = generatePlanPrompt(userInput, nativeLanguage, targetLanguage)
 
   try {

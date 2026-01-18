@@ -533,7 +533,7 @@ async function chatCompletion(messages, options = {}) {
 }
 
 // Streaming chat completion with callback
-async function chatCompletionStream(messages, options = {}, onChunk) {
+export async function chatCompletionStream(messages, options = {}, onChunk) {
   const config = getAIConfig()
   const provider = config.provider
 
