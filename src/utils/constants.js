@@ -160,6 +160,7 @@ export const STORAGE_KEYS = {
   AI_CONFIG: 'ai-shadowing-ai-config',
   TTS_CONFIG: 'ai-shadowing-tts-config',
   AUDIO_CACHE: 'ai-shadowing-audio-cache',
+  LEARNING_PLAN: 'ai-shadowing-learning-plan',
 }
 
 // Get API config from environment variables

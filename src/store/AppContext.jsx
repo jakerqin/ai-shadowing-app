@@ -12,24 +12,29 @@ const initialState = {
     scene: 'daily',
     length: 'medium',
   },
-  
+
   // Current generated content
   currentContent: null,
-  
+
   // Generation status
   isGenerating: false,
   generationError: null,
-  
+
   // Notebook entries
   notebook: [],
-  
+
   // Chat state
   chatMessages: [],
   selectedText: '',
-  
+
   // UI state
   showTranslation: false,
   isPlaying: false,
+
+  // Learning plan state
+  learningPlan: null,
+  planGenerating: false,
+  planGenerationError: null,
 }
 
 // Action types
@@ -49,6 +54,12 @@ const ActionTypes = {
   SET_PLAYING: 'SET_PLAYING',
   UPDATE_CURRENT_CONTENT_TEXT: 'UPDATE_CURRENT_CONTENT_TEXT',
   RESET_CONTENT: 'RESET_CONTENT',
+  // Learning plan actions
+  SET_LEARNING_PLAN: 'SET_LEARNING_PLAN',
+  SET_PLAN_GENERATING: 'SET_PLAN_GENERATING',
+  SET_PLAN_GENERATION_ERROR: 'SET_PLAN_GENERATION_ERROR',
+  COMPLETE_EXERCISE: 'COMPLETE_EXERCISE',
+  RESET_PLAN: 'RESET_PLAN',
 }
 
 // Reducer
@@ -162,7 +173,81 @@ function appReducer(state, action) {
         showTranslation: false,
         isPlaying: false,
       }
-    
+
+    case ActionTypes.SET_LEARNING_PLAN:
+      return {
+        ...state,
+        learningPlan: action.payload,
+        planGenerating: false,
+        planGenerationError: null,
+      }
+
+    case ActionTypes.SET_PLAN_GENERATING:
+      return {
+        ...state,
+        planGenerating: action.payload,
+        planGenerationError: action.payload ? null : state.planGenerationError,
+      }
+
+    case ActionTypes.SET_PLAN_GENERATION_ERROR:
+      return {
+        ...state,
+        planGenerationError: action.payload,
+        planGenerating: false,
+      }
+
+    case ActionTypes.COMPLETE_EXERCISE:
+      if (!state.learningPlan) return state
+
+      const { moduleId, exerciseId } = action.payload
+      const updatedModules = state.learningPlan.modules.map(module => {
+        if (module.id !== moduleId) return module
+
+        const updatedExercises = module.exercises.map(exercise => {
+          if (exercise.id !== exerciseId) return exercise
+          return {
+            ...exercise,
+            completed: true,
+            completedAt: new Date().toISOString(),
+          }
+        })
+
+        const completedCount = updatedExercises.filter(ex => ex.completed).length
+
+        return {
+          ...module,
+          exercises: updatedExercises,
+          progress: {
+            total: module.exercises.length,
+            completed: completedCount,
+          }
+        }
+      })
+
+      const totalExercises = updatedModules.reduce((sum, m) => sum + m.exercises.length, 0)
+      const completedExercises = updatedModules.reduce((sum, m) => sum + m.progress.completed, 0)
+
+      return {
+        ...state,
+        learningPlan: {
+          ...state.learningPlan,
+          modules: updatedModules,
+          overallProgress: {
+            totalExercises,
+            completedExercises,
+            percentage: totalExercises > 0 ? Math.round((completedExercises / totalExercises) * 100) : 0,
+          }
+        }
+      }
+
+    case ActionTypes.RESET_PLAN:
+      return {
+        ...state,
+        learningPlan: null,
+        planGenerating: false,
+        planGenerationError: null,
+      }
+
     default:
       return state
   }
@@ -182,11 +267,17 @@ export function AppProvider({ children }) {
       const parsed = safeJsonParse(savedNotebook, [])
       dispatch({ type: ActionTypes.SET_NOTEBOOK, payload: parsed })
     }
-    
+
     const savedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS)
     if (savedSettings) {
       const parsed = safeJsonParse(savedSettings, {})
       dispatch({ type: ActionTypes.SET_SETTINGS, payload: parsed })
+    }
+
+    const savedPlan = localStorage.getItem(STORAGE_KEYS.LEARNING_PLAN)
+    if (savedPlan) {
+      const parsed = safeJsonParse(savedPlan, null)
+      dispatch({ type: ActionTypes.SET_LEARNING_PLAN, payload: parsed })
     }
   }, [])
   
@@ -199,6 +290,15 @@ export function AppProvider({ children }) {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings))
   }, [state.settings])
+
+  // Save learning plan to localStorage when it changes
+  useEffect(() => {
+    if (state.learningPlan) {
+      localStorage.setItem(STORAGE_KEYS.LEARNING_PLAN, JSON.stringify(state.learningPlan))
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.LEARNING_PLAN)
+    }
+  }, [state.learningPlan])
   
   // Action creators
   const actions = {
@@ -253,9 +353,29 @@ export function AppProvider({ children }) {
     updateCurrentContentText: (text) => {
       dispatch({ type: ActionTypes.UPDATE_CURRENT_CONTENT_TEXT, payload: text })
     },
-    
+
     resetContent: () => {
       dispatch({ type: ActionTypes.RESET_CONTENT })
+    },
+
+    setLearningPlan: (plan) => {
+      dispatch({ type: ActionTypes.SET_LEARNING_PLAN, payload: plan })
+    },
+
+    setPlanGenerating: (isGenerating) => {
+      dispatch({ type: ActionTypes.SET_PLAN_GENERATING, payload: isGenerating })
+    },
+
+    setPlanGenerationError: (error) => {
+      dispatch({ type: ActionTypes.SET_PLAN_GENERATION_ERROR, payload: error })
+    },
+
+    completeExercise: (moduleId, exerciseId) => {
+      dispatch({ type: ActionTypes.COMPLETE_EXERCISE, payload: { moduleId, exerciseId } })
+    },
+
+    resetPlan: () => {
+      dispatch({ type: ActionTypes.RESET_PLAN })
     },
   }
   
