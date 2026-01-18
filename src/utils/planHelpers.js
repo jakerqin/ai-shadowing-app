@@ -54,6 +54,8 @@ export function calculateProgress(plan) {
  * @returns {Object} - 更新后的模块对象
  */
 export function updateModuleProgress(module) {
+  if (!module) return null
+
   const completed = module.exercises.filter(ex => ex.completed).length
   return {
     ...module,
@@ -71,7 +73,8 @@ export function updateModuleProgress(module) {
  */
 export function isPlanCompleted(plan) {
   if (!plan) return false
-  return plan.overallProgress.percentage === 100
+  const { percentage } = calculateProgress(plan)
+  return percentage === 100
 }
 
 /**
@@ -80,5 +83,6 @@ export function isPlanCompleted(plan) {
  * @returns {boolean}
  */
 export function isModuleCompleted(module) {
+  if (!module || !module.progress) return false
   return module.progress.completed === module.progress.total
 }
