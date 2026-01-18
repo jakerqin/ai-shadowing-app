@@ -3,6 +3,7 @@ import { getSpeechRate } from '../utils/helpers'
 
 // Audio cache to avoid re-generating same audio
 const audioCache = new Map()
+const audioInFlight = new Map()
 const DEFAULT_SEGMENT_MAX_CHARS = 240
 
 // Get TTS configuration from localStorage or defaults
@@ -311,6 +312,10 @@ export async function generateSpeech(text, language, options = {}) {
     return audioCache.get(cacheKey)
   }
 
+  if (audioInFlight.has(cacheKey)) {
+    return audioInFlight.get(cacheKey)
+  }
+
   const envConfig = getEnvConfig()
   
   // Check if TTS is configured based on provider
@@ -324,31 +329,41 @@ export async function generateSpeech(text, language, options = {}) {
     throw new Error('TTS not configured. Please configure TTS in Settings.')
   }
 
-  let audioBlob
+  const requestPromise = (async () => {
+    let audioBlob
   
-  switch (config.provider) {
-    case 'gemini':
-      audioBlob = await geminiTTS(text, options)
-      break
-    case 'openai':
-      audioBlob = await openaiTTS(text, options)
-      break
-    case 'glm':
-      audioBlob = await glmTTS(text, options)
-      break
-    case 'azure':
-      audioBlob = await azureTTS(text, options)
-      break
-    default:
-      audioBlob = await geminiTTS(text, options)
-  }
+    switch (config.provider) {
+      case 'gemini':
+        audioBlob = await geminiTTS(text, options)
+        break
+      case 'openai':
+        audioBlob = await openaiTTS(text, options)
+        break
+      case 'glm':
+        audioBlob = await glmTTS(text, options)
+        break
+      case 'azure':
+        audioBlob = await azureTTS(text, options)
+        break
+      default:
+        audioBlob = await geminiTTS(text, options)
+    }
 
-  const audioUrl = URL.createObjectURL(audioBlob)
+    const audioUrl = URL.createObjectURL(audioBlob)
   
-  // Cache the result
-  audioCache.set(cacheKey, audioUrl)
+    // Cache the result
+    audioCache.set(cacheKey, audioUrl)
   
-  return audioUrl
+    return audioUrl
+  })()
+
+  audioInFlight.set(cacheKey, requestPromise)
+
+  try {
+    return await requestPromise
+  } finally {
+    audioInFlight.delete(cacheKey)
+  }
 }
 
 // Play audio from URL
@@ -526,6 +541,47 @@ function splitTextIntoSegments(text, maxChars = DEFAULT_SEGMENT_MAX_CHARS) {
   return segments
 }
 
+// Prefetch audio for faster playback
+export async function prefetchSpeech(text, language, difficulty = 3, options = {}) {
+  const speed = getSpeechRate(difficulty)
+  const segments = options.segmented === false
+    ? [text]
+    : splitTextIntoSegments(text, options.maxChars || DEFAULT_SEGMENT_MAX_CHARS)
+  const signal = options.signal
+  const maxConcurrency = Math.max(1, Math.floor(options.maxConcurrency || 2))
+
+  if (!segments.length || signal?.aborted) return
+
+  let nextIndex = 0
+  let inFlightCount = 0
+
+  return new Promise((resolve) => {
+    const schedule = () => {
+      if (signal?.aborted) {
+        resolve()
+        return
+      }
+      if (nextIndex >= segments.length && inFlightCount === 0) {
+        resolve()
+        return
+      }
+      while (inFlightCount < maxConcurrency && nextIndex < segments.length) {
+        const index = nextIndex
+        nextIndex += 1
+        inFlightCount += 1
+        generateSpeech(segments[index], language, { speed, signal })
+          .catch(() => {})
+          .finally(() => {
+            inFlightCount -= 1
+            schedule()
+          })
+      }
+    }
+
+    schedule()
+  })
+}
+
 // Generate and play speech in one call
 export async function speakText(text, language, difficulty = 3, onStateChange = null, options = {}) {
   const speed = getSpeechRate(difficulty)
@@ -625,6 +681,7 @@ export default {
   generateSpeech,
   playAudio,
   createAudioPlayer,
+  prefetchSpeech,
   speakText,
   clearAudioCache,
 }

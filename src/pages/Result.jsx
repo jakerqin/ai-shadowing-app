@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { useApp } from '../store/AppContext'
 import { generateContent, translateText, explainWord, chatAboutText, generatePhonetics } from '../services/ai'
-import { speakText, generateSpeech, createAudioPlayer } from '../services/tts'
+import { speakText, generateSpeech, createAudioPlayer, prefetchSpeech } from '../services/tts'
 import { LANGUAGES, SCENES } from '../utils/constants'
 import { tokenizeText, getLanguageName, generateId } from '../utils/helpers'
 import { Button, Card, Modal, Badge, Spinner, IconButton, Textarea } from '../components/UI'
@@ -34,6 +34,7 @@ export default function Result() {
   const chatEndRef = useRef(null)
   const hasStartedRef = useRef(false)
   const abortControllerRef = useRef(null)
+  const prefetchAbortRef = useRef(null)
   const typewriterTimerRef = useRef(null)
   const pendingTextRef = useRef('')
   const displayTextRef = useRef('')
@@ -65,6 +66,12 @@ export default function Result() {
     }
   }, [isGenerating])
 
+  useEffect(() => {
+    return () => {
+      stopPrefetch()
+    }
+  }, [])
+
   // Scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -84,6 +91,13 @@ export default function Result() {
     if (typewriterTimerRef.current) {
       clearInterval(typewriterTimerRef.current)
       typewriterTimerRef.current = null
+    }
+  }
+
+  const stopPrefetch = () => {
+    if (prefetchAbortRef.current) {
+      prefetchAbortRef.current.abort()
+      prefetchAbortRef.current = null
     }
   }
 
@@ -159,6 +173,8 @@ export default function Result() {
       const targetLanguage = getLanguageName(settings.targetLanguage, LANGUAGES)
       const nativeLanguage = getLanguageName(settings.nativeLanguage, LANGUAGES)
 
+      stopPrefetch()
+
       const text = await generateContent({
         targetLanguage,
         nativeLanguage,
@@ -174,6 +190,22 @@ export default function Result() {
         actions.setGenerating(false)
         return
       }
+
+      const prefetchController = new AbortController()
+      prefetchAbortRef.current = prefetchController
+
+      void prefetchSpeech(text, settings.targetLanguage, settings.difficulty, {
+        segmented: true,
+        maxChars: 240,
+        maxConcurrency: 2,
+        signal: prefetchController.signal,
+      }).finally(() => {
+        if (prefetchAbortRef.current === prefetchController) {
+          prefetchAbortRef.current = null
+        }
+      })
+
+      void handleTranslate(text, { allowWhileGenerating: true, showTranslation: false })
 
       pendingTextRef.current = text
       streamDoneRef.current = true
@@ -266,19 +298,27 @@ export default function Result() {
   }
 
   // Translate content
-  const handleTranslate = async () => {
-    if (isStreaming || !contentText) return
+  const handleTranslate = async (sourceText = null, options = {}) => {
+    const textToTranslate = sourceText ?? contentText
+    const allowWhileGenerating = options.allowWhileGenerating === true
+    const showTranslationPanel = options.showTranslation !== false
+
+    if ((!allowWhileGenerating && isStreaming) || !textToTranslate) return
     if (currentContent?.translation) {
-      actions.toggleTranslation()
+      if (showTranslationPanel) {
+        actions.toggleTranslation()
+      }
       return
     }
 
     setIsTranslating(true)
-    actions.toggleTranslation() // Show translation area immediately
+    if (showTranslationPanel) {
+      actions.toggleTranslation() // Show translation area immediately
+    }
 
     try {
       const finalTranslation = await translateText(
-        contentText,
+        textToTranslate,
         getLanguageName(settings.targetLanguage, LANGUAGES),
         getLanguageName(settings.nativeLanguage, LANGUAGES)
       )
