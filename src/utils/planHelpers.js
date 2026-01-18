@@ -8,7 +8,7 @@
  * @returns {Object|null} - { module, exercise } 或 null（所有练习已完成）
  */
 export function getNextSuggestedExercise(plan) {
-  if (!plan) return null
+  if (!plan || !plan.modules) return null
 
   for (const module of plan.modules) {
     const nextExercise = module.exercises.find(ex => !ex.completed)
@@ -29,12 +29,13 @@ export function getNextSuggestedExercise(plan) {
  * @returns {Object} - { total, completed, percentage }
  */
 export function calculateProgress(plan) {
-  if (!plan) return { total: 0, completed: 0, percentage: 0 }
+  if (!plan || !plan.modules) return { total: 0, completed: 0, percentage: 0 }
 
   let total = 0
   let completed = 0
 
   plan.modules.forEach(module => {
+    if (!module.exercises) return  // 额外防御
     module.exercises.forEach(exercise => {
       total++
       if (exercise.completed) completed++
@@ -54,7 +55,7 @@ export function calculateProgress(plan) {
  * @returns {Object} - 更新后的模块对象
  */
 export function updateModuleProgress(module) {
-  if (!module) return null
+  if (!module || !module.exercises) return null
 
   const completed = module.exercises.filter(ex => ex.completed).length
   return {
@@ -83,6 +84,6 @@ export function isPlanCompleted(plan) {
  * @returns {boolean}
  */
 export function isModuleCompleted(module) {
-  if (!module || !module.progress) return false
-  return module.progress.completed === module.progress.total
+  if (!module || !module.exercises || module.exercises.length === 0) return false
+  return module.exercises.every(ex => ex.completed)
 }
