@@ -88,6 +88,13 @@ function buildPlanObject(planData, userInput, nativeLanguage, targetLanguage) {
     throw new Error('无效的计划数据结构:缺少 modules 数组')
   }
 
+  // 验证每个模块都有有效的 exercises 数组
+  planData.modules.forEach((module, idx) => {
+    if (!Array.isArray(module.exercises)) {
+      throw new Error(`模块 ${idx + 1} 缺少有效的 exercises 数组`)
+    }
+  })
+
   const planId = `plan_${Date.now()}`
 
   const modules = planData.modules.map((module, moduleIndex) => {
